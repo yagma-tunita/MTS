@@ -258,7 +258,8 @@ CREATE TABLE segment_capacity_usage (
     CONSTRAINT fk_usage_vessel FOREIGN KEY (vessel_id) REFERENCES vessel(vessel_id),
     CONSTRAINT fk_usage_start_port FOREIGN KEY (start_port_id) REFERENCES port(port_id),
     CONSTRAINT fk_usage_end_port FOREIGN KEY (end_port_id) REFERENCES port(port_id),
-    UNIQUE INDEX uk_usage_unique (order_id, line_id, vessel_id, voyage_date, start_port_id, end_port_id)
+    UNIQUE INDEX uk_usage_unique (order_id, line_id, vessel_id, voyage_date, start_port_id, end_port_id),
+    INDEX idx_usage_query (line_id, vessel_id, voyage_date, start_port_id, end_port_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 -- =============================================================================
