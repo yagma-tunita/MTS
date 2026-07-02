@@ -1,0 +1,777 @@
+2026-06-25 初始版本 — 后端完整内容（更新前状态）
+
+项目：MTS（Maritime Transport System）航运物流管理系统
+语言：Go 1.25.4
+模块名：backend
+构建：go build ./app → app.exe
+
+================================================================================
+一、技术栈与依赖
+================================================================================
+
+  HTTP 框架：     github.com/gin-gonic/gin v1.12.0
+  ORM：           gorm.io/gorm v1.31.1 + gorm.io/driver/mysql v1.6.0
+  JWT：           github.com/golang-jwt/jwt/v5 v5.3.1
+  WebSocket：     github.com/gorilla/websocket v1.5.3
+  Excel：         github.com/xuri/excelize/v2 v2.10.1
+  缓存：          github.com/patrickmn/go-cache v2.1.0
+  密码：          golang.org/x/crypto v0.53.0 (bcrypt)
+  日志：          log/slog (标准库) + gopkg.in/natefinch/lumberjack.v2
+  验证：          github.com/go-playground/validator/v10 v10.30.3
+  Swagger：       github.com/swaggo/gin-swagger v1.6.1
+  ID生成：        github.com/sony/sonyflake v1.3.0
+  UUID：          github.com/google/uuid v1.6.0
+  配置：          gopkg.in/yaml.v3
+
+
+================================================================================
+二、项目目录结构
+================================================================================
+
+  backend/
+  ├── app/main.go              — 程序入口，组件装配
+  ├── config.yaml              — YAML 配置文件
+  ├── go.mod / go.sum          — 依赖管理
+  ├── docs/                    — Swagger 文档
+  ├── logs/                    — 日志文件输出目录
+  ├── sql/
+  │   ├── tables_mysql.sql     — DDL 建表脚本（13 张表）
+  │   ├── SQL.md               — 数据库设计文档
+  │   └── E-R.png              — ER 图
+  ├── pkg/                     — 共享基础设施层
+  │   ├── config/config.go     — 配置加载
+  │   ├── logger/logger.go     — 日志初始化
+  │   ├── database/mysql.go    — MySQL 连接
+  │   ├── jwt/jwt.go           — JWT 令牌
+  │   ├── crypto/crypto.go     — bcrypt / AES-GCM / MD5
+  │   ├── errors/errors.go     — 错误码 + AppError
+  │   ├── response/response.go — 统一响应格式
+  │   ├── validator/validator.go — 参数校验
+  │   ├── cache/cache.go       — 内存缓存
+  │   ├── excel/excel.go       — Excel 导入导出
+  │   ├── timeutil/timeutil.go — 时间工具
+  │   ├── idgen/idgen.go       — Sonyflake ID
+  │   └── fileutil/fileutil.go — 文件操作
+  ├── net/                     — HTTP 网络层
+  │   ├── middleware/          — Gin 中间件
+  │   │   ├── auth.go          — JWT 认证 + 角色校验
+  │   │   ├── cors.go          — CORS
+  │   │   ├── logger.go        — 请求日志
+  │   │   ├── rate_limit.go    — 令牌桶限流
+  │   │   └── recovery.go      — panic 恢复
+  │   ├── protect/             — 安全防御
+  │   │   ├── headers.go       — 安全响应头
+  │   │   ├── honeypot.go      — 蜜罐陷阱
+  │   │   ├── ip_blocklist.go  — IP 黑名单
+  │   │   └── request_guard.go — 请求守卫
+  │   ├── router/router.go     — 路由注册
+  │   └── websocket/           — WebSocket 实时推送
+  │       ├── hub.go           — 连接管理中心
+  │       ├── client.go        — 客户端读写泵
+  │       └── handler.go       — WS 升级处理
+  └── internal/                — 业务代码
+      ├── model/               — GORM 数据模型
+      │   ├── city.go
+      │   ├── port.go
+      │   ├── berth.go
+      │   ├── shipper_company.go
+      │   ├── shipping_company.go
+      │   ├── admin.go
+      │   ├── vessel.go
+      │   ├── shipping_line.go
+      │   ├── voyage_berthing.go
+      │   ├── voyage_cargo_note.go
+      │   ├── shipping_order.go
+      │   ├── order_cargo.go
+      │   └── segment_capacity_usage.go
+      ├── dao/                 — 数据访问层
+      │   ├── dao.go                   — NotDeleted 作用域
+      │   ├── city_dao.go
+      │   ├── port_dao.go
+      │   ├── berth_dao.go
+      │   ├── shipper_company_dao.go
+      │   ├── shipping_company_dao.go
+      │   ├── admin_dao.go
+      │   ├── vessel_dao.go
+      │   ├── shipping_line_dao.go
+      │   ├── voyage_berthing_dao.go
+      │   ├── voyage_cargo_note_dao.go
+      │   ├── shipping_order_dao.go
+      │   ├── order_cargo_dao.go
+      │   └── segment_capacity_usage_dao.go
+      ├── biz/                 — 领域逻辑层（无状态）
+      │   ├── container.go              — BizContainer 聚合
+      │   ├── port_sequence_parser.go   — 解析 JSON 港口序列
+      │   ├── segment_calculator.go     — 计算相邻港口对
+      │   ├── capacity_checker.go       — 运力校验
+      │   ├── cost_calculator.go        — 费用计算
+      │   ├── order_no_generator.go     — 订单号生成
+      │   ├── order_state_machine.go    — 状态机
+      │   ├── voyage_recommender.go     — 航次推荐
+      │   └── errors.go                 — 业务错误定义
+      ├── service/             — 应用服务层（事务+编排）
+      │   ├── common.go                 — 共享 Logger / 锁工具
+      │   ├── order_service.go          — 订单服务
+      │   ├── voyage_service.go         — 航次服务
+      │   ├── company_service.go        — 货主/船公司服务
+      │   ├── admin_service.go          — 管理员服务
+      │   ├── port_service.go           — 港口服务
+      │   ├── vessel_service.go         — 船舶服务
+      │   ├── shipping_line_service.go  — 航线服务
+      │   ├── import_export_service.go  — Excel 导入导出
+      │   ├── notification_service.go   — 通知服务
+      │   ├── report_service.go         — 报表服务
+      │   └── websocket_service.go      — WS 推送服务
+      └── handler/             — HTTP 控制器层
+          ├── handler.go                — Handlers 聚合
+          ├── auth.go                   — 登录/刷新令牌
+          ├── company.go                — 货主/船公司注册+改密
+          ├── admin.go                  — 管理员注册+改密
+          ├── order.go                  — 订单 CRUD
+          ├── voyage.go                 — 航次推荐
+          ├── port.go                   — 港口查询
+          ├── vessel.go                 — 船舶查询
+          ├── shipping_line.go          — 航线查询
+          ├── import_export.go          — Excel 导入导出
+          ├── notification.go           — 通知管理
+          └── report.go                 — 报表
+
+
+================================================================================
+三、配置文件（config.yaml）
+================================================================================
+
+  server:
+    port: "8080"
+    read_timeout: 30s
+    write_timeout: 30s
+    idle_timeout: 60s
+
+  database:
+    driver: mysql
+    dsn: "root:111322@qq.comxyZ@tcp(127.0.0.1:3306)/mts?charset=utf8mb4&parseTime=True&loc=Local"
+    max_open_conns: 25
+    max_idle_conns: 10
+    conn_max_lifetime: 5m
+    conn_max_idle_time: 5m
+
+  log:
+    level: info
+    format: json
+    output_path: "logs/app.log"
+    max_size: 100
+    max_backups: 10
+    max_age: 30
+    compress: true
+
+  jwt:
+    secret: "your-production-secret-key"
+    access_expire: 15m
+    refresh_expire: 168h
+
+  freight:
+    base_rate_per_ton_nm: 0.05
+    cargo_type_factors:
+      bulk: 1.0
+      container: 1.2
+      liquid: 1.1
+
+环境变量覆盖：DB_DSN / JWT_SECRET / SERVER_PORT / LOG_LEVEL / LOG_OUTPUT_PATH
+
+
+================================================================================
+四、入口 main.go 启动流程
+================================================================================
+
+  1. config.MustLoad("config.yaml")     — 读取配置，环境变量覆盖
+  2. logger.Init(...)                    — 初始化 slog（仅文件输出）
+  3. database.MustNewMySQL(cfg)          — 连接 MySQL，GORM 日志
+  4. db.AutoMigrate(...)                 — 可选（AUTO_MIGRATE=true 时）
+  5. jwt.NewJWTService(secret, 15m, 168h) — JWT 服务
+  6. dao.NewXxxDAO(db)                   — 9 个 DAO
+  7. biz.NewBizContainer()               — 6 个业务组件
+  8. service.NewXxxService(...)          — 12 个 Service
+  9. handler.NewHandlers(...)            — 聚合所有 Handler
+  10. router.Setup(handlers, jwtSvc)     — Gin 路由 + 中间件
+  11. 附加 /swagger/*any
+  12. 可选 ENABLE_PPROF=true → /debug/pprof
+  13. http.Server.ListenAndServe()
+  14. 信号监听 (SIGINT/SIGTERM) → srv.Shutdown(ctx)
+  15. 30 秒间隔的 DB 连接池统计 goroutine (slog.Debug)
+
+
+================================================================================
+五、数据模型（13 个 GORM 实体）
+================================================================================
+
+5.1 city（城市）
+  city_id        BIGINT PK AUTO_INCREMENT
+  city_name      VARCHAR(100) NOT NULL
+  country        VARCHAR(100)
+  country_code   VARCHAR(10)
+  timezone       VARCHAR(50)
+  latitude       DECIMAL(10,6)
+  longitude      DECIMAL(10,6)
+  create_time    DATETIME
+  update_time    DATETIME
+  delete_time    DATETIME (软删除)
+
+5.2 port（港口）
+  port_id        BIGINT PK
+  port_name      VARCHAR(200) NOT NULL
+  port_code      VARCHAR(50) UNIQUE
+  city_id        BIGINT FK → city
+  latitude       DECIMAL(10,6)
+  longitude      DECIMAL(10,6)
+  port_type      VARCHAR(50)
+  max_draft_meter DECIMAL(6,2)
+  create/update/delete_time
+  City *City (GORM 关联)
+
+5.3 berth（泊位）
+  berth_id            BIGINT PK
+  berth_name          VARCHAR(100) NOT NULL
+  port_id             BIGINT FK → port
+  berth_type          VARCHAR(50)
+  draft_meter         DECIMAL(6,2)
+  length_meter        DECIMAL(8,2)
+  width_meter         DECIMAL(8,2)
+  max_berthing_tonnage DECIMAL(12,2)
+  functional_zone     VARCHAR(100)
+  is_available        TINYINT DEFAULT 1
+  create/update/delete_time
+  Port *Port
+
+5.4 shipper_company（货主公司）
+  company_id                  BIGINT PK
+  company_name                VARCHAR(200) NOT NULL
+  unified_social_credit_code  VARCHAR(50)
+  legal_representative        VARCHAR(100)
+  contact_phone               VARCHAR(50)
+  address                     VARCHAR(500)
+  login_username              VARCHAR(100) NOT NULL UNIQUE
+  login_password              VARCHAR(255) NOT NULL (bcrypt)
+  account_status              TINYINT DEFAULT 1
+  create/update/delete_time
+
+5.5 shipping_company（船运公司）
+  company_id                  BIGINT PK
+  company_name                VARCHAR(200) NOT NULL
+  unified_social_credit_code  VARCHAR(50)
+  contact_person              VARCHAR(100)
+  contact_phone               VARCHAR(50)
+  address                     VARCHAR(500)
+  login_username              VARCHAR(100) NOT NULL UNIQUE
+  login_password              VARCHAR(255) NOT NULL (bcrypt)
+  account_status              TINYINT DEFAULT 1
+  create/update/delete_time
+
+5.6 admin（管理员）
+  admin_id     BIGINT PK
+  username     VARCHAR(100) NOT NULL UNIQUE
+  password     VARCHAR(255) NOT NULL (bcrypt)
+  real_name    VARCHAR(100)
+  role         TINYINT DEFAULT 2 (1=超级, 2=普通)
+  create/update/delete_time
+
+5.7 vessel（船舶）
+  vessel_id               BIGINT PK
+  vessel_name             VARCHAR(200) NOT NULL
+  call_sign               VARCHAR(50)
+  imo_number              VARCHAR(20) NOT NULL UNIQUE (IMO识别号)
+  vessel_type             VARCHAR(50)
+  max_deadweight_ton      DECIMAL(12,2)
+  gross_tonnage           DECIMAL(12,2)
+  net_tonnage             DECIMAL(12,2)
+  draft_meter             DECIMAL(6,2)
+  speed_knot              DECIMAL(6,2)
+  container_teu           INT
+  is_available            TINYINT DEFAULT 1
+  shipping_company_id     BIGINT FK → shipping_company
+  create/update/delete_time
+  ShippingCompany *ShippingCompany
+
+5.8 shipping_line（航线）
+  line_id                 BIGINT PK
+  line_name               VARCHAR(200) NOT NULL
+  shipping_company_id     BIGINT FK
+  port_sequence           JSON ([port_id, port_id, ...])
+  total_distance_nm       DECIMAL(10,2)
+  departure_port_name     VARCHAR(200) (冗余)
+  destination_port_name   VARCHAR(200) (冗余)
+  description             TEXT
+  create/update/delete_time
+  ShippingCompany *ShippingCompany
+
+5.9 voyage_berthing（航次靠泊）
+  berthing_id             BIGINT PK
+  line_id                 BIGINT FK
+  vessel_id               BIGINT FK
+  voyage_date             DATE NOT NULL
+  sequence_no             INT NOT NULL (从1递增)
+  port_id                 BIGINT FK
+  berth_id                BIGINT FK
+  planned_arrival_time    DATETIME
+  planned_departure_time  DATETIME
+  actual_arrival_time     DATETIME
+  actual_departure_time   DATETIME
+  draft_at_berthing_meter DECIMAL(6,2)
+  is_adjustable           TINYINT DEFAULT 1
+  create_time/update_time (无 delete_time)
+  Line *ShippingLine / Vessel *Vessel / Port *Port / Berth *Berth
+  UNIQUE (line_id, vessel_id, voyage_date, sequence_no)
+
+5.10 voyage_cargo_note（航次货单）
+  note_id                       BIGINT PK
+  line_id                       BIGINT FK
+  vessel_id                     BIGINT FK
+  voyage_date                   DATE NOT NULL
+  sequence_no                   INT NOT NULL
+  cargo_name                    VARCHAR(200)
+  cargo_type                    VARCHAR(50)
+  quantity                      DECIMAL(18,2)
+  weight_ton                    DECIMAL(18,3)
+  volume_cubic_meter            DECIMAL(18,3)
+  unit_price                    DECIMAL(18,2)
+  subtotal                      DECIMAL(18,2)
+  operation_type                VARCHAR(20) (LOAD / UNLOAD)
+  cargo_handled_ton             DECIMAL(18,3)
+  cumulative_booked_capacity_ton DECIMAL(18,3) (累计已订吨位)
+  create_time/update_time (无 delete_time)
+  Line *ShippingLine / Vessel *Vessel
+
+5.11 shipping_order（订单）
+  order_id                BIGINT PK
+  order_no                VARCHAR(50) NOT NULL UNIQUE
+  shipper_company_id      BIGINT FK
+  city_id                 BIGINT FK
+  load_note_id            BIGINT FK → voyage_cargo_note
+  unload_note_id          BIGINT FK → voyage_cargo_note
+  departure_port_id       BIGINT FK → port
+  destination_port_id     BIGINT FK → port
+  expected_departure_date DATE
+  expected_arrival_date   DATE
+  total_cost              DECIMAL(18,2)
+  shipper_contact         VARCHAR(200)
+  consignee_contact       VARCHAR(200)
+  payment_status          TINYINT (0=未支付, 1=已支付, 2=部分支付)
+  order_status            TINYINT (0=草稿, 1=已确认, 2=运输中, 3=已完成, 4=已取消)
+  total_weight_ton        DECIMAL(18,3)
+  total_volume_cubic_meter DECIMAL(18,3)
+  create/update/delete_time
+  ShipperCompany / City / LoadNote / UnloadNote / DeparturePort / DestinationPort (GORM 关联)
+  OrderCargos []OrderCargo (一对多)
+
+5.12 order_cargo（订单货物明细）
+  detail_id           BIGINT PK
+  order_id            BIGINT FK
+  cargo_name          VARCHAR(200)
+  cargo_type          VARCHAR(50)
+  quantity            DECIMAL(18,2)
+  weight_ton          DECIMAL(18,3)
+  volume_cubic_meter  DECIMAL(18,3)
+  unit_price          DECIMAL(18,2)
+  subtotal            DECIMAL(18,2)
+  create/update/delete_time
+  Order *ShippingOrder
+
+5.13 segment_capacity_usage（航段运力占用）
+  usage_id      BIGINT PK
+  order_id      BIGINT FK
+  line_id       BIGINT FK
+  vessel_id     BIGINT FK
+  voyage_date   DATE NOT NULL
+  start_port_id BIGINT FK → port
+  end_port_id   BIGINT FK → port
+  occupied_ton  DECIMAL(18,3) NOT NULL
+  create_time   (无 update_time / delete_time)
+  Order / Line / Vessel / StartPort / EndPort (GORM 关联)
+  UNIQUE (order_id, line_id, vessel_id, voyage_date, start_port_id, end_port_id)
+
+
+================================================================================
+六、数据访问层 DAO（接口 + GORM 实现）
+================================================================================
+
+所有 DAO 位于 internal/dao/，共 13 个文件：
+
+  dao.go
+    - NotDeleted(db) *gorm.DB    — 全局软删除过滤 WHERE delete_time IS NULL
+    - InitDB / GetDB             — 全局 DB 访问
+
+  city_dao.go
+    - CityDAO 接口: Create / GetByID / Update / Delete / List
+    - 实现: gorm.DB 操作
+
+  port_dao.go
+    - PortDAO 接口: Create / GetByID / Update / Delete / List / ListByCity
+    - 实现含 Scopes(NotDeleted)
+
+  berth_dao.go / vessel_dao.go / shipping_line_dao.go / shipping_order_dao.go
+  order_cargo_dao.go / segment_capacity_usage_dao.go
+
+  shipper_company_dao.go
+    - GetByUsername(username) → 用于登录查询
+    - 全部使用 NotDeleted 作用域
+
+  shipping_company_dao.go — 同上
+
+  admin_dao.go
+    - GetByUsername(username)
+
+  voyage_berthing_dao.go
+    - 基础 CRUD + 按航次查询
+
+  voyage_cargo_note_dao.go
+    - FindByPortAndOp(lineID, vesselID, voyageDate, portID, opType)
+      JOIN voyage_berthing ON (line_id, vessel_id, voyage_date, sequence_no)
+      WHERE berthing.port_id = ? AND note.operation_type = ?
+      用于订单创建时查找装货/卸货清单
+    - AddCumulativeCapacity(tx, noteID, deltaTon)
+      在事务中更新 cumulative_booked_capacity_ton
+
+
+================================================================================
+七、领域逻辑层 Biz（无状态纯逻辑）
+================================================================================
+
+7.1 PortSequenceParser (port_sequence_parser.go)
+    Parse(jsonStr string) ([]int64, error)
+    将 JSON 字符串 "[1,2,3]" 解析为 []int64{1,2,3}
+
+7.2 SegmentCalculator (segment_calculator.go)
+    Calculate(portIDs []int64, startPortID, endPortID int64) ([][2]int64, error)
+    返回起止港之间的所有相邻港口对。
+    如 portIDs=[1,2,3], start=1, end=3 → {1,2}, {2,3}
+    错误: ErrPortNotFoundInSeq / ErrStartAfterEnd
+
+7.3 CapacityChecker (capacity_checker.go)
+    Check(segments, maxWeight, occupiedGetter, totalWeight) (bool, float64, error)
+    遍历所有航段，计算 maxWeight - used - newWeight
+    任一航段 < 0 → ErrInsufficientCapacity
+
+7.4 CostCalculator (cost_calculator.go)
+    Calculate(items []CargoItem) (*CostResult, error)
+    汇总总重量、总体积、各货物小计
+    不含运费公式（运费在 service 层计算）
+
+7.5 OrderNoGenerator (order_no_generator.go)
+    Generate() string
+    格式：ORD{YYYYMMDD}{8位随机hex}
+    如：ORD20260702a3f2b1c8
+
+7.6 OrderStateMachine (order_state_machine.go)
+    Transition(oldStatus, newStatus int8) error
+    允许转换：
+      0(草稿) → 1(已确认) / 4(已取消)
+      1(已确认) → 2(运输中) / 4(已取消)
+      2(运输中) → 3(已完成) / 4(已取消)
+      3(已完成) → (无)
+      4(已取消) → (无)
+
+7.7 VoyageRecommender (voyage_recommender.go)
+    Recommend(...) ([]VoyageRecommendation, error)
+    遍历所有航线 → 解析 port_sequence → 查找航次 → 计算各航段已占容量
+    → 取瓶颈最小剩余容量 → 过滤 ≥ 需求吨位的航次 → 降序排序
+    结果缓存 1 分钟 (cache key: voyage_rec:{startPort}:{endPort}:{requiredTon})
+
+7.8 BizContainer (container.go)
+    聚合所有 Biz 组件，NewBizContainer() 统一创建
+
+
+================================================================================
+八、应用服务层 Service
+================================================================================
+
+8.1 common.go
+    Logger = slog.Default()
+    AcquireLock(tx, lockName, timeout)
+    ReleaseLock(tx, lockName)
+    VoyageLockKey(lineID, vesselID, voyageDate) → "voyage_{lineID}_{vesselID}_{date}"
+    MustParseDate / PtrInt8 / WithTimeout
+
+8.2 OrderService (order_service.go)
+    CreateOrder(ctx, req) (*ShippingOrder, error)
+      - 校验货物列表非空
+      - 调用 CostCalculator.Calculate → 汇总重量/体积
+      - 查 Vessel.GetByID → max_deadweight_ton
+      - 查 ShippingLine.GetByID → port_sequence, total_distance_nm
+      - 运费公式: totalWeight × totalDistanceNm × baseRate(0.05) × cargoTypeFactor
+        货类系数: bulk=1.0, container=1.2, liquid=1.1
+      - PortSequenceParser.Parse → 解析端口序列
+      - SegmentCalculator.Calculate → 计算航段
+      - VoyageCargoNoteDAO.FindByPortAndOp → 查 LOAD/UNLOAD 清单
+      - 事务内:
+        1. GET_LOCK("voyage_{lineID}_{vesselID}_{date}", 10)
+        2. SELECT ... FOR UPDATE 锁定航段占用
+        3. CapacityChecker.Check → 校验各航段剩余 ≤ 0
+        4. OrderNoGenerator.Generate → 生成订单号
+        5. INSERT shipping_order (status=1 已确认, payment=0 未支付)
+        6. INSERT order_cargo (批量)
+        7. INSERT segment_capacity_usage (每个航段一条)
+        8. 更新 LOAD/UNLOAD 清单的 cumulative_booked_capacity_ton
+        9. RELEASE_LOCK
+      - 清除 voyage_rec:* 缓存
+      - 返回完整订单
+
+    CancelOrder(ctx, orderID)
+      - SELECT FOR UPDATE 锁行查订单 + 预加载 LOAD/UNLOAD 清单
+      - 校验 status != 4 (已取消)
+      - GET_LOCK → 清单减去重量 → 软删除订单/货物 → 物理删除运力占用
+
+    UpdateOrderStatus(ctx, orderID, newStatus)
+      - StateMachine.Transition → 更新 status → WebSocket 推送
+
+    GetOrderByID / ListOrdersByShipper / GetOrderTracking
+
+8.3 VoyageService (voyage_service.go)
+    RecommendVoyages(startPortID, endPortID, requiredTon) → []VoyageRecommendation
+
+8.4 CompanyService (company_service.go)
+    ShipperCompanyService / ShippingCompanyService:
+      Register — bcrypt.HashPassword → dao.Create
+      Login — dao.GetByUsername → bcrypt.CompareHashAndPassword → 检查 account_status
+      UpdatePassword
+
+8.5 AdminService (admin_service.go)
+    Create — bcrypt.HashPassword → dao.Create
+    Login — dao.GetByUsername → bcrypt.CompareHashAndPassword
+    UpdatePassword
+
+8.6 PortService / VesselService / ShippingLineService
+    基础 CRUD + 缓存查询结果（10分钟 TTL）
+
+8.7 ImportExportService (import_export_service.go)
+    ExportPorts / ImportPorts / ExportVessels / ImportVessels
+    ExportShippingLines / ImportShippingLines / ExportOrders
+
+8.8 NotificationService (notification_service.go)
+    内存存储 (map[string][]Notification, key="{userID}:{role}")
+    List / MarkAsRead / Send
+
+8.9 ReportService (report_service.go)
+    OrderStatistics — 按日期范围统计订单/重量/体积/费用/状态
+    VoyageUtilization — 运力利用率百分比
+
+8.10 WebSocketService (websocket_service.go)
+    PushOrderStatusUpdate(userID, role, orderID, newStatus)
+    序列化 JSON → ws.PushToUser()
+
+
+================================================================================
+九、HTTP 控制器层 Handler
+================================================================================
+
+9.1 AuthHandler (auth.go)
+    POST /auth/login
+      接收 {username, password, role}
+      按 role 路由到 shipperSvc/shippingSvc/adminSvc.Login
+      成功 → 返回 {access_token, refresh_token, role, user_id}
+
+    POST /auth/refresh
+      接收 {refresh_token}
+      解析 → 生成新 access_token
+
+9.2 ShipperCompanyHandler (company.go)
+    POST /shipper/register — 公开注册
+    POST /shipper/password — 改密（需认证）
+
+9.3 ShippingCompanyHandler (company.go)
+    POST /shipping/register — 公开注册
+    POST /shipping/password — 改密（需认证）
+
+9.4 AdminHandler (admin.go)
+    POST /admin/register — 创建管理员（需 admin 角色）
+    POST /admin/password — 改密（需 admin 角色）
+
+9.5 OrderHandler (order.go)
+    POST /orders — 创建订单（核心）
+    GET /orders/:id — 查订单详情
+    POST /orders/:id/cancel — 取消
+    PUT /orders/:id/status — 更新状态
+    GET /orders — 分页查询（按 shipper_company_id）
+    GET /orders/:id/tracking — 货物跟踪
+
+9.6 VoyageHandler (voyage.go)
+    GET /voyages/recommend?start_port_id=X&end_port_id=Y&required_ton=Z
+
+9.7 PortHandler / VesselHandler / ShippingLineHandler
+    GET /ports — 列表（可选?city_id=）
+    GET /ports/:id — 详情
+    GET /vessels — 列表（可选?shipping_company_id=）
+    GET /vessels/:id
+    GET /shipping-lines — 列表
+    GET /shipping-lines/:id
+    GET /shipping-lines/:id/port-sequence
+
+9.8 ImportExportHandler (import_export.go)
+    GET /export/ports    POST /import/ports
+    GET /export/vessels  POST /import/vessels
+    GET /export/shipping-lines  POST /import/shipping-lines
+    GET /export/orders?shipper_company_id=X
+
+9.9 NotificationHandler (notification.go)
+    GET /notifications — 我的通知
+    PUT /notifications/:id/read — 标记已读
+    POST /admin/notifications — 管理员发通知
+
+9.10 ReportHandler (report.go)
+    GET /reports/orders — 订单统计
+    GET /reports/voyage-utilization — 航次利用率
+
+
+================================================================================
+十、中间件 (按注册顺序)
+================================================================================
+
+  Gin 路由注册顺序 (router.go):
+
+  1. GET /health                     — 无中间件
+  2. GET /ws                         — 无中间件（放在全局之前避免干扰）
+
+  3. Logger()                        — 记录请求方法/路径/状态/延迟/IP/UA
+  4. Recovery()                      — panic 恢复 + 堆栈日志
+  5. NewCORS(Default)                — 允许所有来源，方法 GET/POST/PUT/DELETE/OPTIONS
+  6. SecurityHeaders()               — X-Content-Type-Options / X-Frame-Options
+                                       X-XSS-Protection / Referrer-Policy / CSP
+  7. Honeypot(Default)               — 拦截 /wp-admin /phpmyadmin /.env /admin 等
+  8. IPBlocklist(Default)            — 从配置拒绝黑名单 IP（默认空）
+  9. RequestGuard(Default)           — 限制请求体 4MB / URL 2048字符 / 方法白名单
+  10. RateLimit(Default)             — 令牌桶 100tokens/s, burst=20, 返回 429
+
+  11. NewAuthMiddleware(jwtSvc).RequireAuth()   — JWT 认证 (protected 组)
+  12. NewAuthMiddleware(jwtSvc).RequireRole("admin")  — 角色校验 (admin 组)
+
+
+================================================================================
+十一、WebSocket
+================================================================================
+
+  路径：/ws?token=<access_token>
+  包：net/websocket/
+
+  Hub (hub.go)
+    - clients map[*Client]bool
+    - register/unregister/broadcast 三个 channel
+    - Run() 无限 select 循环
+    - SendToUser(userID, role, message)
+
+  Client (client.go)
+    - conn *websocket.Conn
+    - send chan []byte (buffer=256)
+    - userID / role / active(int32)
+    - ReadPump()   — 读消息 + pong 处理 (pongWait=60s)
+    - WritePump()  — 写消息 + ping (pingPeriod=54s)
+    - IsActive()
+
+  Handler (handler.go)
+    - 全局 var hub = NewHub()
+    - init() 中 go hub.Run()
+    - ServeWS(jwtSvc) — 验证 token → Upgrade → NewClient → register
+    - PushToUser(userID, role, message) — 对外导出
+
+  WebSocket 推送由 OrderService 在状态变更时触发：
+    wsSvc.PushOrderStatusUpdate(shipperCompanyID, "shipper", orderID, newStatus)
+
+
+================================================================================
+十二、完整路由表
+================================================================================
+
+  方法    路径                                    认证       说明
+  ─────────────────────────────────────────────────────────────────────────
+  GET     /health                                公开       健康检查
+  GET     /ws?token=                             公开        WebSocket
+  POST    /api/v1/auth/login                     公开        登录
+  POST    /api/v1/auth/refresh                   公开        刷新令牌
+  POST    /api/v1/shipper/register               公开        货主注册
+  POST    /api/v1/shipping/register              公开        船公司注册
+  POST    /api/v1/shipper/password               JWT        货主改密
+  POST    /api/v1/shipping/password              JWT        船公司改密
+  POST    /api/v1/orders                         JWT        创建订单
+  GET     /api/v1/orders/:id                     JWT        订单详情
+  POST    /api/v1/orders/:id/cancel              JWT        取消订单
+  PUT     /api/v1/orders/:id/status              JWT        更新状态
+  GET     /api/v1/orders                         JWT        订单列表
+  GET     /api/v1/orders/:id/tracking            JWT        货物跟踪
+  GET     /api/v1/voyages/recommend              JWT        航次推荐
+  GET     /api/v1/ports                          JWT        港口列表
+  GET     /api/v1/ports/:id                      JWT        港口详情
+  GET     /api/v1/vessels                        JWT        船舶列表
+  GET     /api/v1/vessels/:id                    JWT        船舶详情
+  GET     /api/v1/shipping-lines                 JWT        航线列表
+  GET     /api/v1/shipping-lines/:id             JWT        航线详情
+  GET     /api/v1/shipping-lines/:id/port-sequence JWT     港口序列
+  GET     /api/v1/export/ports                   JWT        导出港口
+  POST    /api/v1/import/ports                   JWT        导入港口
+  GET     /api/v1/export/vessels                 JWT        导出船舶
+  POST    /api/v1/import/vessels                 JWT        导入船舶
+  GET     /api/v1/export/shipping-lines          JWT        导出航线
+  POST    /api/v1/import/shipping-lines          JWT        导入航线
+  GET     /api/v1/export/orders                  JWT        导出订单
+  GET     /api/v1/notifications                  JWT        通知列表
+  PUT     /api/v1/notifications/:id/read         JWT        标记已读
+  GET     /api/v1/reports/orders                 JWT        订单统计
+  GET     /api/v1/reports/voyage-utilization     JWT        航次利用率
+  POST    /api/v1/admin/register                 admin      创建管理员
+  POST    /api/v1/admin/password                 admin      管理员改密
+  POST    /api/v1/admin/notifications            admin      发送通知
+  GET     /swagger/*any                         公开       Swagger UI
+  GET     /debug/pprof/*                         pprof      性能分析 (可选)
+
+
+================================================================================
+十三、统一响应格式
+================================================================================
+
+  成功:
+    {"code": 0, "message": "success", "data": {...}}
+
+  分页:
+    {"code": 0, "message": "success", "data": [...], "meta": {"page":1, "page_size":20, "total":100, "total_pages":5}}
+
+  错误:
+    {"code": 1001, "message": "invalid credentials"}
+
+  错误码:
+    0    成功
+    1000 错误请求（参数验证失败）
+    1001 未授权（无效凭证/令牌）
+    1002 禁止（权限不足）
+    1003 未找到
+    1004 冲突（如订单已取消）
+    1005 请求过多（429）
+    2000 内部服务器错误
+    2001 数据库错误
+    2002 依赖错误
+
+
+================================================================================
+十四、安全设计
+================================================================================
+
+  1. 密码 bcrypt 哈希存储（无明文）
+  2. JWT 双令牌（15min access + 7d refresh），HMAC-SHA256
+  3. 软删除（delete_time），不物理删除数据
+  4. MySQL GET_LOCK() 并发控制
+  5. 安全响应头（XSS/CSP/点击劫持防护）
+  6. 蜜罐陷阱（拦截扫描器）
+  7. IP 黑名单
+  8. 请求守卫（限制体大小/URL长度/方法白名单）
+  9. 令牌桶限流（100/s, burst=20）
+  10. 统一错误响应（不泄露内部信息）
+
+
+================================================================================
+十五、已知限制
+================================================================================
+
+  1. 通知存储于内存（go-cache），重启丢失，多实例需换 Redis
+  2. 限流器基于内存令牌桶，非分布式
+  3. 航次推荐缓存于内存（1分钟 TTL）
+  4. 密码修改接口路由缺少 :id 参数，功能不可用（BUG）
+  5. 订单创建未校验 shipper_company_id 归属（安全隐患）
+  6. WebSocket Hub 无法优雅关闭（Run 循环永不退出）
+  7. JWT secret 为默认值 "your-production-secret-key"，需修改才能生产使用
+  8. 日志仅输出到文件，终端看不到实时日志
+  9. 无种子数据脚本，首次部署需手动插入测试数据

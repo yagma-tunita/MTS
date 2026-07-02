@@ -23,18 +23,19 @@ func Init(level string, format string, outputPath string, maxSize, maxBackups, m
 		logLevel = slog.LevelInfo
 	}
 
-	var writer io.Writer
-	if outputPath == "stdout" {
-		writer = os.Stdout
-	} else {
-		writer = &lumberjack.Logger{
+	var writers []io.Writer
+	writers = append(writers, os.Stdout)
+	if outputPath != "" && outputPath != "stdout" {
+		writers = append(writers, &lumberjack.Logger{
 			Filename:   outputPath,
 			MaxSize:    maxSize,
 			MaxBackups: maxBackups,
 			MaxAge:     maxAge,
 			Compress:   compress,
-		}
+		})
 	}
+
+	writer := io.MultiWriter(writers...)
 
 	opts := &slog.HandlerOptions{Level: logLevel}
 	var handler slog.Handler

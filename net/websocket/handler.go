@@ -51,3 +51,8 @@ func ServeWS(jwtSvc jwt.JWTService) gin.HandlerFunc {
 func PushToUser(userID int64, role string, message []byte) {
 	hub.SendToUser(userID, role, message)
 }
+
+// ShutdownHub gracefully stops the WebSocket Hub and closes all connections.
+func ShutdownHub() {
+	hub.Stop()
+}

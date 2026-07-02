@@ -14,8 +14,10 @@ import (
 	"backend/internal/dao"
 	"backend/internal/handler"
 	"backend/internal/model"
+	"backend/internal/notify"
 	"backend/internal/service"
 	"backend/net/router"
+	ws "backend/net/websocket"
 	"backend/pkg/config"
 	"backend/pkg/database"
 	"backend/pkg/jwt"
@@ -81,7 +83,6 @@ func main() {
 
 	bizContainer := biz.NewBizContainer()
 
-	// WebSocket service
 	wsSvc := service.NewWebSocketService()
 
 	orderSvc := service.NewOrderService(
@@ -106,7 +107,26 @@ func main() {
 	shippingLineSvc := service.NewShippingLineService(shippingLineDAO, bizContainer.PortSequenceParser)
 
 	importExportSvc := service.NewImportExportService(db, portDAO, vesselDAO, shippingLineDAO, orderDAO)
-	notifSvc := service.NewNotificationService()
+
+	notifyProv := notify.NewProvider(
+		notify.EmailConfig{
+			SMTPHost: cfg.Notify.Email.SMTPHost,
+			SMTPPort: cfg.Notify.Email.SMTPPort,
+			Username: cfg.Notify.Email.Username,
+			Password: cfg.Notify.Email.Password,
+			FromAddr: cfg.Notify.Email.FromAddr,
+			FromName: cfg.Notify.Email.FromName,
+		},
+		notify.SMSConfig{
+			Provider:        cfg.Notify.SMS.Provider,
+			AccessKeyID:     cfg.Notify.SMS.AccessKeyID,
+			AccessKeySecret: cfg.Notify.SMS.AccessKeySecret,
+			SignName:        cfg.Notify.SMS.SignName,
+			TemplateCode:    cfg.Notify.SMS.TemplateCode,
+		},
+	)
+
+	notifSvc := service.NewNotificationService(notifyProv)
 	reportSvc := service.NewReportService(db)
 
 	handlers := handler.NewHandlers(
@@ -170,6 +190,10 @@ func main() {
 
 	<-quit
 	slog.Info("shutting down server...")
+
+	ws.ShutdownHub()
+	slog.Info("WebSocket hub stopped")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {

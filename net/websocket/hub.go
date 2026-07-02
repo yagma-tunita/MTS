@@ -9,7 +9,9 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 	broadcast  chan []byte
+	stop       chan struct{}
 	mu         sync.RWMutex
+	stopOnce   sync.Once
 }
 
 func NewHub() *Hub {
@@ -18,6 +20,7 @@ func NewHub() *Hub {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		broadcast:  make(chan []byte),
+		stop:       make(chan struct{}),
 	}
 }
 
@@ -41,12 +44,26 @@ func (h *Hub) Run() {
 				select {
 				case client.send <- message:
 				default:
-					// avoid blocking, client will be cleaned by write pump
 				}
 			}
 			h.mu.RUnlock()
+		case <-h.stop:
+			h.mu.Lock()
+			for client := range h.clients {
+				delete(h.clients, client)
+				close(client.send)
+				client.conn.Close()
+			}
+			h.mu.Unlock()
+			return
 		}
 	}
+}
+
+func (h *Hub) Stop() {
+	h.stopOnce.Do(func() {
+		close(h.stop)
+	})
 }
 
 func (h *Hub) SendToUser(userID int64, role string, message []byte) {

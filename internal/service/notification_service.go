@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"backend/internal/notify"
 )
 
 type NotificationType string
@@ -34,11 +36,13 @@ type NotificationService interface {
 
 type notificationServiceImpl struct {
 	storage map[string][]Notification
+	prov    *notify.Provider
 }
 
-func NewNotificationService() NotificationService {
+func NewNotificationService(prov *notify.Provider) NotificationService {
 	return &notificationServiceImpl{
 		storage: make(map[string][]Notification),
+		prov:    prov,
 	}
 }
 
@@ -50,6 +54,23 @@ func (s *notificationServiceImpl) Send(ctx context.Context, notif *Notification)
 	key := fmt.Sprintf("%d:%s", notif.UserID, notif.UserRole)
 	s.storage[key] = append(s.storage[key], *notif)
 	Logger.Info("notification sent", "user_id", notif.UserID, "type", notif.Type, "title", notif.Title)
+
+	if s.prov != nil && notif.Data != nil {
+		if email, ok := notif.Data["email"].(string); ok && email != "" && s.prov.Email != nil && s.prov.Email.IsConfigured() {
+			go func() {
+				if err := s.prov.Email.Send(email, notif.Title, notif.Content); err != nil {
+					Logger.Error("email send failed", "to", email, "error", err)
+				}
+			}()
+		}
+		if phone, ok := notif.Data["phone"].(string); ok && phone != "" && s.prov.SMS != nil {
+			go func() {
+				if err := s.prov.SMS.Send(phone, notif.Content); err != nil {
+					Logger.Error("sms send failed", "to", phone, "error", err)
+				}
+			}()
+		}
+	}
 	return nil
 }
 

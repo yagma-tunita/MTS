@@ -1,0 +1,373 @@
+2026-07-02 更新说明
+
+================================================================================
+1. 修复：日志只输出到文件，终端看不到实时日志
+================================================================================
+
+文件：pkg/logger/logger.go - Init() 函数
+
+修改前：
+  var writer io.Writer
+  if outputPath == "stdout" {
+      writer = os.Stdout
+  } else {
+      writer = &lumberjack.Logger{...}
+  }
+
+修改后：
+  var writers []io.Writer
+  writers = append(writers, os.Stdout)                          // 始终输出到终端
+  if outputPath != "" && outputPath != "stdout" {
+      writers = append(writers, &lumberjack.Logger{...})        // 同时输出到文件
+  }
+  writer := io.MultiWriter(writers...)
+
+效果：日志同时显示在终端 stdout 和配置文件指定的日志文件中。
+
+
+================================================================================
+2. 修复：config.yaml 的 JWT secret 使用了默认值
+================================================================================
+
+文件：config.yaml
+
+修改前：
+  secret: "your-production-secret-key"
+
+修改后：
+  secret: "mts-production-secret-key-change-in-production"
+
+同时日志配置从 json 改为 text 格式，级别从 info 改为 debug，方便终端阅读：
+  level: debug
+  format: text
+
+
+================================================================================
+3. 新增：测试数据种子脚本
+================================================================================
+
+文件：cmd/seed/main.go（新建）
+
+功能：清空所有 13 张表 → 重置自增 ID → 插入纯英文测试数据
+
+插入的数据：
+  - 城市 × 3
+
+    city_id=1  Shanghai,     China,  31.2304, 121.4737
+    city_id=2  Singapore,    Singapore, 1.3521, 103.8198
+    city_id=3  Rotterdam,    Netherlands, 51.9225, 4.4792
+
+  - 港口 × 3
+
+    port_id=1  Shanghai Port    CNSHA,  city_id=1
+    port_id=2  Singapore Port   SGSIN,  city_id=2
+    port_id=3  Rotterdam Port   NLRTM,  city_id=3
+
+  - 泊位 × 3
+
+    berth_id=1  Shanghai Berth A    port_id=1
+    berth_id=2  Singapore Berth B   port_id=2
+    berth_id=3  Rotterdam Berth C   port_id=3
+
+  - 货主公司 × 1
+
+    company_id=1  Global Trade Co.     username=test001      password=123456  (bcrypt: $2a$10$...)
+
+  - 船运公司 × 1
+
+    company_id=1  Oceanic Shipping Co.  username=shipping001  password=123456  (bcrypt: $2a$10$...)
+
+  - 管理员 × 1
+
+    admin_id=1  username=admin,  password=admin123  role=1(超级管理员)
+
+  - 船舶 × 1
+
+    vessel_id=1  M/V Ocean Queen,  IMO9876543,  max_deadweight_ton=50000,  ShippingCompanyID=1
+
+  - 航线 × 1
+
+    line_id=1  Asia-Europe Express,  port_sequence=[1,2,3],  total_distance_nm=8500
+    departure_port_name=Shanghai Port,  destination_port_name=Rotterdam Port
+
+  - 航次靠泊 × 3（2026-07-15 航次）
+
+    seq=1  port_id=1(Shanghai)   planned_arrival=2026-07-15 08:00,  departure=18:00
+    seq=2  port_id=2(Singapore)  planned_arrival=2026-07-17 06:00,  departure=16:00
+    seq=3  port_id=3(Rotterdam)  planned_arrival=2026-07-22 10:00,  departure=20:00
+
+  - 航次货单 × 2
+
+    note_id=1  seq=1,  operation_type=LOAD,   cargo=Electronics, weight=500t (装载于上海)
+    note_id=2  seq=3,  operation_type=UNLOAD, cargo=Machinery,   weight=400t (卸载于鹿特丹)
+
+
+================================================================================
+4. 测试验证：全部 9 个核心接口通过
+================================================================================
+
+  - 三种角色登录 ✓   shipper/shipping/admin 均返回 access_token + refresh_token
+  - 港口/船舶/航线查询 ✓   数据完整返回
+  - 订单创建 ✓    上海→鹿特丹, 50吨, 运费 25500 = 50×8500×0.05×1.2
+  - 货物跟踪 ✓    起运港/目的港/船名/航线名全部正确
+  - 航次推荐 ✓    返回剩余容量 49950 吨
+  - 状态变更 ✓    1(已确认)→2(运输中)
+  - 取消订单 ✓    成功释放运力
+
+
+================================================================================
+5. Bug 修复：密码修改接口路由缺少 :id 参数
+================================================================================
+
+文件：net/router/router.go 第50-51行、第95行
+
+问题：路由注册为 /shipper/password，但 handler 用 c.Param("id") 取路径中的 id，
+     由于没有 :id 占位符，永远取不到值，接口不可用。
+
+修改前：
+  protected.POST("/shipper/password", h.ShipperCompany.UpdatePassword)
+  protected.POST("/shipping/password", h.ShippingCompany.UpdatePassword)
+  adminGroup.POST("/password", h.Admin.UpdatePassword)
+
+修改后：
+  protected.POST("/shipper/password/:id", h.ShipperCompany.UpdatePassword)
+  protected.POST("/shipping/password/:id", h.ShippingCompany.UpdatePassword)
+  adminGroup.POST("/password/:id", h.Admin.UpdatePassword)
+
+
+================================================================================
+6. 安全修复：创建订单时校验 shipper_company_id 与 JWT 身份一致
+================================================================================
+
+文件：internal/handler/order.go - CreateOrder() 函数，第38行后新增校验逻辑
+
+问题：handler 直接从请求体读取 shipper_company_id，JWT 只验证了登录状态，
+     未验证该 ID 是否属于当前用户。A 货主可以替 B 货主下单。
+
+新增代码：
+  role, _ := c.Get("role")
+  userID, _ := c.Get("user_id")
+  if role == "shipper" {
+      if uid, ok := userID.(int64); !ok || uid != req.ShipperCompanyID {
+          response.ErrorWithCode(c.Writer, errors.CodeForbidden, "shipper_company_id mismatch")
+          return
+      }
+  }
+
+效果：shipper 角色只能使用自己的 company_id 下单；admin 不受限制。
+
+
+================================================================================
+7. WebSocket 优雅关闭
+================================================================================
+
+涉及文件：
+  - net/websocket/hub.go
+  - net/websocket/handler.go
+  - app/main.go
+
+7.1 Hub 添加关闭机制 (hub.go)
+
+修改前：
+  Hub 结构体只有 register/unregister/broadcast 三个 channel
+  Run() 无限循环，没有退出路径
+
+修改后：
+  - Hub 新增 stop chan struct{} 字段
+  - NewHub() 初始化 stop: make(chan struct{})
+  - Run() 的 select 新增 case <-h.stop:
+      加锁 → 遍历所有 client，close(send)，Close(conn) → 解锁 → return
+  - 新增 Stop() 方法：close(h.stop)
+
+7.2 导出 ShutdownHub 函数 (handler.go)
+
+修改前：
+  只有 PushToUser() 导出
+
+修改后：
+  新增 ShutdownHub() 函数，调用 hub.Stop()
+
+7.3 server 关闭时先停 WebSocket (main.go)
+
+修改前：
+  <-quit 后直接 srv.Shutdown(ctx)
+
+修改后：
+  <-quit → ws.ShutdownHub() → srv.Shutdown(ctx)
+
+
+================================================================================
+8. 优化：admin 路由复用 AuthMiddleware 实例
+================================================================================
+
+文件：net/router/router.go 第46-47行、第91-92行
+
+问题：protected 组和 adminGroup 各创建了一次 NewAuthMiddleware(jwtSvc)，
+     中间件实例重复。
+
+修改前：
+  protected.Use(middleware.NewAuthMiddleware(jwtSvc).RequireAuth())
+  ...
+  adminGroup.Use(middleware.NewAuthMiddleware(jwtSvc).RequireRole("admin"))
+
+修改后：
+  authMw := middleware.NewAuthMiddleware(jwtSvc)
+  protected.Use(authMw.RequireAuth())
+  ...
+  adminGroup.Use(authMw.RequireRole("admin"))
+
+
+================================================================================
+9. 安全优化：密码 hash 后清空内存中的明文引用
+================================================================================
+
+涉及文件：
+  - internal/service/company_service.go
+  - internal/service/admin_service.go
+
+9.1 ShipperCompany.Register (company_service.go 第35行后)
+
+修改前：
+  company.LoginPassword = hash
+  // 直接创建
+
+修改后：
+  plainPassword = ""
+  company.LoginPassword = hash
+
+9.2 ShippingCompany.Register (company_service.go 第116行后)
+
+相同修改：plainPassword = ""
+
+9.3 Admin.Create (admin_service.go 第35行后)
+
+相同修改：plainPassword = ""
+
+9.4 ShipperCompany.UpdatePassword (company_service.go 第84行后)
+
+修改前：
+  company.LoginPassword = hash
+  if err := s.dao.Update(company); ...
+
+修改后：
+  company.LoginPassword = hash
+  oldPassword = ""
+  newPassword = ""
+  if err := s.dao.Update(company); ...
+
+9.5 ShippingCompany.UpdatePassword (company_service.go 第167行后)
+
+相同修改：oldPassword = "" / newPassword = ""
+
+9.6 Admin.UpdatePassword (admin_service.go 第78行后)
+
+相同修改：oldPassword = "" / newPassword = ""
+
+
+================================================================================
+10. 新增：邮件/短信通知发送模块
+================================================================================
+
+新增文件：
+  - internal/notify/email.go          — SMTP 邮件发送（net/smtp）
+  - internal/notify/sms.go            — SMS 发送接口（console / aliyun / tencent）
+  - internal/notify/provider.go       — Provider 聚合
+
+修改文件：
+  - internal/service/notification_service.go — 集成 email/SMS，通知 data 中携带 email/phone 即自动发送
+  - app/main.go                       — 创建 notify provider 并注入
+  - config.yaml                       — 新增 notify.email / notify.sms 配置
+  - pkg/config/config.go              — 新增 NotifyConfig 结构体 + 环境变量覆盖
+
+设计原则：
+  - 不新增任何数据库表
+  - 通知仍使用内存存储（现有机制不变）
+  - email/phone 通过 Notification.Data 字段传递
+  - 调用方（handler/业务层）决定发送给谁
+  - SMTP/SMS 均异步发送，不阻塞主流程
+
+配置方式（config.yaml）：
+  notify:
+    email:
+      smtp_host: "smtp.example.com"    # SMTP 服务器
+      smtp_port: 587                    # 端口
+      username: "noreply@example.com"   # 发件账号
+      password: "your-email-password"   # 密码
+      from_addr: "noreply@example.com"  # 发件地址
+      from_name: "MTS System"           # 发件名称
+    sms:
+      provider: "console"               # console=仅日志, aliyun=阿里云, tencent=腾讯云
+      access_key_id: ""                 # 短信 API 密钥
+      access_key_secret: ""
+      sign_name: ""                     # 短信签名
+      template_code: ""                 # 短信模板
+
+环境变量覆盖：
+  NOTIFY_EMAIL_SMTP_HOST / NOTIFY_EMAIL_SMTP_PORT / NOTIFY_EMAIL_USERNAME
+   NOTIFY_EMAIL_PASSWORD / NOTIFY_EMAIL_FROM_ADDR / NOTIFY_EMAIL_FROM_NAME
+   NOTIFY_SMS_PROVIDER
+
+
+================================================================================
+11. 新增：数据库优化 SQL 文件（视图/触发器/存储过程）
+================================================================================
+
+文件：sql/optimizations_mysql.sql（新增，不修改现有 DDL）
+
+视图：
+  - vw_order_detail             — 订单完整详情（关联货主/港口/船舶/航线）
+  - vw_voyage_capacity          — 航次各航段剩余容量
+  - vw_port_sequence_detail     — 航线港口序列详情
+
+存储过程：
+  - sp_get_voyage_remaining_capacity — 获取指定航段剩余容量
+  - sp_recommend_voyages             — 航次推荐（JSON_SEARCH 验证港口顺序）
+
+触发器：
+  - trg_shipping_order_before_update_delete_time — 软删除订单时同步软删除 order_cargo
+
+索引建议（注释状态，按需启用）：
+  - idx_usage_voyage_query
+  - idx_order_shipper_status_time
+  - idx_cargonote_voyage_query
+
+
+================================================================================
+12. 代码优化：分页上限 + 排序优化
+================================================================================
+
+修改文件：
+  - internal/handler/port.go           — pageSize 上限 100
+  - internal/handler/vessel.go         — pageSize 上限 100
+  - internal/handler/shipping_line.go  — pageSize 上限 100
+  - internal/biz/voyage_recommender.go — 冒泡排序改为 sort.Slice + 新增 import sort
+
+保护措施：所有列表接口 page_size 超过 100 自动截断到 100
+
+
+================================================================================
+13. 完整实现阿里云/腾讯云 SMS 发送
+================================================================================
+
+修改文件：
+  - internal/notify/sms.go — 阿里云(HMAC-SHA1)和腾讯云(TC3-HMAC-SHA256)完整 HTTP API 实现
+
+console 模式保持免费（仅日志），切换到 aliyun/tencent 后可发真实短信。
+
+
+================================================================================
+14. 邮箱发送支持 SSL（端口465）+ 配置校验
+================================================================================
+
+修改文件：
+  - internal/notify/email.go — 支持 STARTTLS(587) 和 SSL(465)；增加 IsConfigured() 校验
+
+空配置时不再尝试发送，返回明确错误。
+
+
+================================================================================
+15. 代码审查修复
+================================================================================
+
+  - net/websocket/hub.go      — Stop() 使用 sync.Once 防止重复 close channel
+  - internal/service/notification_service.go — Email/SMS 发送增加 nil 检查和错误日志

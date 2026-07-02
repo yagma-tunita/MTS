@@ -13,8 +13,8 @@ database:
   conn_max_idle_time: 5m
 
 log:
-  level: info
-  format: json
+  level: debug
+  format: text
   output_path: "logs/app.log"
   max_size: 100
   max_backups: 10
@@ -22,6 +22,28 @@ log:
   compress: true
 
 jwt:
-  secret: "your-production-secret-key"
+  secret: "mts-production-secret-key-change-in-production"
   access_expire: 15m
   refresh_expire: 168h
+
+freight:
+  base_rate_per_ton_nm: 0.05
+  cargo_type_factors:
+    bulk: 1.0
+    container: 1.2
+    liquid: 1.1
+
+notify:
+  email:
+    smtp_host: "smtp.example.com"
+    smtp_port: 587
+    username: "noreply@example.com"
+    password: "your-email-password"
+    from_addr: "noreply@example.com"
+    from_name: "MTS System"
+  sms:
+    provider: "console"
+    access_key_id: ""
+    access_key_secret: ""
+    sign_name: ""
+    template_code: ""

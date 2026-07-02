@@ -34,7 +34,6 @@ type createOrderRequest struct {
 	ExpectedArrival   *string             `json:"expected_arrival,omitempty"`
 }
 
-// CreateOrder handles POST /orders
 func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	var req createOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -44,6 +43,15 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	if err := validator.Validate(req); err != nil {
 		response.BadRequest(c.Writer, err.Error())
 		return
+	}
+
+	role, _ := c.Get("role")
+	userID, _ := c.Get("user_id")
+	if role == "shipper" {
+		if uid, ok := userID.(int64); !ok || uid != req.ShipperCompanyID {
+			response.ErrorWithCode(c.Writer, errors.CodeForbidden, "shipper_company_id mismatch")
+			return
+		}
 	}
 
 	orderReq := &service.CreateOrderRequest{
@@ -70,10 +78,10 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		response.InternalServerError(c.Writer, "failed to create order")
 		return
 	}
+
 	response.Success(c.Writer, order)
 }
 
-// GetOrder handles GET /orders/:id
 func (h *OrderHandler) GetOrder(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -89,7 +97,6 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 	response.Success(c.Writer, order)
 }
 
-// CancelOrder handles POST /orders/:id/cancel
 func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -113,7 +120,6 @@ type updateOrderStatusRequest struct {
 	Status int8 `json:"status" validate:"required,min=0,max=4"`
 }
 
-// UpdateOrderStatus handles PUT /orders/:id/status
 func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -142,7 +148,6 @@ func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 	response.Success(c.Writer, gin.H{"message": "order status updated"})
 }
 
-// ListOrders handles GET /orders
 func (h *OrderHandler) ListOrders(c *gin.Context) {
 	shipperIDStr := c.Query("shipper_company_id")
 	if shipperIDStr == "" {
@@ -175,7 +180,6 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	response.SuccessPage(c.Writer, orders, page, pageSize, total)
 }
 
-// GetOrderTracking handles GET /orders/:id/tracking
 func (h *OrderHandler) GetOrderTracking(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)

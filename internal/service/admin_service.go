@@ -32,6 +32,7 @@ func (s *adminServiceImpl) Create(ctx context.Context, admin *model.Admin, plain
 		logger.Error("failed to hash password", "error", err)
 		return err
 	}
+	plainPassword = ""
 	admin.Password = hash
 	if err := s.dao.Create(admin); err != nil {
 		logger.Error("failed to create admin", "error", err)

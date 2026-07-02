@@ -13,15 +13,12 @@ import (
 func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 	r := gin.New()
 
-	// Health check endpoint (no middleware)
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// WebSocket endpoint - placed before any middlewares to avoid interference
 	r.GET("/ws", websocket.ServeWS(jwtSvc))
 
-	// Global middlewares (order matters)
 	r.Use(middleware.Logger())
 	r.Use(middleware.Recovery())
 	r.Use(middleware.NewCORS(middleware.DefaultCORSConfig()))
@@ -33,7 +30,6 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 
 	api := r.Group("/api/v1")
 	{
-		// Public routes (no authentication)
 		public := api.Group("/")
 		{
 			public.POST("/auth/login", h.Auth.Login)
@@ -42,15 +38,13 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 			public.POST("/shipping/register", h.ShippingCompany.Register)
 		}
 
-		// Protected routes (require JWT)
+		authMw := middleware.NewAuthMiddleware(jwtSvc)
 		protected := api.Group("/")
-		protected.Use(middleware.NewAuthMiddleware(jwtSvc).RequireAuth())
+		protected.Use(authMw.RequireAuth())
 		{
-			// Password updates
-			protected.POST("/shipper/password", h.ShipperCompany.UpdatePassword)
-			protected.POST("/shipping/password", h.ShippingCompany.UpdatePassword)
+			protected.POST("/shipper/password/:id", h.ShipperCompany.UpdatePassword)
+			protected.POST("/shipping/password/:id", h.ShippingCompany.UpdatePassword)
 
-			// Orders
 			protected.POST("/orders", h.Order.CreateOrder)
 			protected.GET("/orders/:id", h.Order.GetOrder)
 			protected.POST("/orders/:id/cancel", h.Order.CancelOrder)
@@ -58,10 +52,8 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 			protected.GET("/orders", h.Order.ListOrders)
 			protected.GET("/orders/:id/tracking", h.Order.GetOrderTracking)
 
-			// Voyage recommendation
 			protected.GET("/voyages/recommend", h.Voyage.Recommend)
 
-			// Basic data
 			protected.GET("/ports", h.Port.ListPorts)
 			protected.GET("/ports/:id", h.Port.GetPort)
 			protected.GET("/vessels", h.Vessel.ListVessels)
@@ -70,7 +62,6 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 			protected.GET("/shipping-lines/:id", h.ShippingLine.GetLine)
 			protected.GET("/shipping-lines/:id/port-sequence", h.ShippingLine.GetPortSequence)
 
-			// Import/Export
 			protected.GET("/export/ports", h.ImportExport.ExportPorts)
 			protected.POST("/import/ports", h.ImportExport.ImportPorts)
 			protected.GET("/export/vessels", h.ImportExport.ExportVessels)
@@ -79,20 +70,17 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 			protected.POST("/import/shipping-lines", h.ImportExport.ImportShippingLines)
 			protected.GET("/export/orders", h.ImportExport.ExportOrders)
 
-			// Notifications
 			protected.GET("/notifications", h.Notification.ListNotifications)
 			protected.PUT("/notifications/:id/read", h.Notification.MarkAsRead)
 
-			// Reports
 			protected.GET("/reports/orders", h.Report.OrderStatistics)
 			protected.GET("/reports/voyage-utilization", h.Report.VoyageUtilization)
 
-			// Admin only routes (require role=admin)
 			adminGroup := protected.Group("/admin")
-			adminGroup.Use(middleware.NewAuthMiddleware(jwtSvc).RequireRole("admin"))
+			adminGroup.Use(authMw.RequireRole("admin"))
 			{
 				adminGroup.POST("/register", h.Admin.Create)
-				adminGroup.POST("/password", h.Admin.UpdatePassword)
+				adminGroup.POST("/password/:id", h.Admin.UpdatePassword)
 				adminGroup.POST("/notifications", h.Notification.SendNotification)
 			}
 		}

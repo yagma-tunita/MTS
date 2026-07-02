@@ -58,6 +58,7 @@ func (h *VesselHandler) GetVessel(c *gin.Context) {
 func (h *VesselHandler) ListVessels(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize < 1 { pageSize = 20 }; if pageSize > 100 { pageSize = 100 }
 	vessels, total, err := h.svc.ListVessels(c.Request.Context(), page, pageSize)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list vessels")
@@ -92,6 +93,7 @@ func (h *VesselHandler) ListVesselsByCompany(c *gin.Context) {
 	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize < 1 { pageSize = 20 }; if pageSize > 100 { pageSize = 100 }
 	vessels, total, err := h.svc.ListVesselsByCompany(c.Request.Context(), companyID, page, pageSize)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list vessels")

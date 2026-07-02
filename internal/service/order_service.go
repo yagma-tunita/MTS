@@ -313,9 +313,15 @@ func (s *orderServiceImpl) CancelOrder(ctx context.Context, orderID int64) error
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var order model.ShippingOrder
-		err := tx.Preload("LoadNote").Preload("UnloadNote").First(&order, orderID).Error
+		err := tx.Set("gorm:query_option", "FOR UPDATE").
+			Preload("LoadNote").
+			Preload("UnloadNote").
+			First(&order, orderID).Error
 		if err != nil {
 			return pkgerr.NotFound("order not found")
+		}
+		if order.OrderStatus != nil && *order.OrderStatus == 4 {
+			return pkgerr.Conflict("order already cancelled")
 		}
 		if order.LoadNote == nil || order.UnloadNote == nil {
 			return pkgerr.NotFound("cargo note not found")
@@ -331,28 +337,10 @@ func (s *orderServiceImpl) CancelOrder(ctx context.Context, orderID int64) error
 		}
 		defer ReleaseLock(tx, lockName)
 
-		var lockedOrder model.ShippingOrder
-		err = tx.Set("gorm:query_option", "FOR UPDATE").
-			Preload("LoadNote").
-			Preload("UnloadNote").
-			First(&lockedOrder, orderID).Error
-		if err != nil {
-			return pkgerr.NotFound("order not found")
-		}
-
-		if lockedOrder.OrderStatus != nil {
-			if *lockedOrder.OrderStatus == 4 {
-				return pkgerr.Conflict("order already cancelled")
-			}
-			if *lockedOrder.OrderStatus == 3 {
-				return pkgerr.Conflict("cannot cancel a completed order")
-			}
-		}
-
-		if err := s.voyageCargoNoteDAO.AddCumulativeCapacity(tx, *lockedOrder.LoadNoteID, -*lockedOrder.TotalWeightTon); err != nil {
+		if err := s.voyageCargoNoteDAO.AddCumulativeCapacity(tx, *order.LoadNoteID, -*order.TotalWeightTon); err != nil {
 			return err
 		}
-		if err := s.voyageCargoNoteDAO.AddCumulativeCapacity(tx, *lockedOrder.UnloadNoteID, -*lockedOrder.TotalWeightTon); err != nil {
+		if err := s.voyageCargoNoteDAO.AddCumulativeCapacity(tx, *order.UnloadNoteID, -*order.TotalWeightTon); err != nil {
 			return err
 		}
 
@@ -382,40 +370,31 @@ func (s *orderServiceImpl) UpdateOrderStatus(ctx context.Context, orderID int64,
 	logger := Logger.With("method", "UpdateOrderStatus", "order_id", orderID, "new_status", newStatus)
 	logger.Info("updating order status")
 
-	var shipperCompanyID int64
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var order model.ShippingOrder
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&order, orderID).Error; err != nil {
-			return pkgerr.NotFound("order not found")
-		}
-		oldStatus := int8(0)
-		if order.OrderStatus != nil {
-			oldStatus = *order.OrderStatus
-		}
-		if oldStatus == newStatus {
-			return nil
-		}
-		if err := s.stateMachine.Transition(oldStatus, newStatus); err != nil {
-			return pkgerr.BadRequest("invalid state transition")
-		}
-		if err := tx.Model(&model.ShippingOrder{}).Where("order_id = ?", orderID).
-			Update("order_status", newStatus).Error; err != nil {
-			return err
-		}
-		if order.ShipperCompanyID != nil {
-			shipperCompanyID = *order.ShipperCompanyID
-		}
-		return nil
-	})
+	order, err := s.orderDAO.GetByID(orderID)
 	if err != nil {
+		return pkgerr.NotFound("order not found")
+	}
+	oldStatus := int8(0)
+	if order.OrderStatus != nil {
+		oldStatus = *order.OrderStatus
+	}
+	if err := s.stateMachine.Transition(oldStatus, newStatus); err != nil {
+		logger.Warn("invalid state transition", "from", oldStatus, "to", newStatus)
+		return pkgerr.BadRequest("invalid state transition")
+	}
+	order.OrderStatus = &newStatus
+	if err := s.orderDAO.Update(order); err != nil {
 		logger.Error("update failed", "error", err)
 		return err
 	}
-	if shipperCompanyID != 0 {
-		if err := s.wsSvc.PushOrderStatusUpdate(shipperCompanyID, "shipper", orderID, newStatus); err != nil {
-			logger.Error("websocket push failed (non-blocking)", "error", err)
+
+	// WebSocket push
+	if order.ShipperCompanyID != nil {
+		if err := s.wsSvc.PushOrderStatusUpdate(*order.ShipperCompanyID, "shipper", orderID, newStatus); err != nil {
+			logger.Error("failed to push websocket notification", "error", err)
 		}
 	}
+
 	logger.Info("order status updated")
 	return nil
 }
@@ -474,8 +453,7 @@ type OrderTracking struct {
 func (s *orderServiceImpl) GetOrderTracking(ctx context.Context, orderID int64) (*OrderTracking, error) {
 	var order model.ShippingOrder
 	err := s.db.Scopes(dao.NotDeleted).
-		Preload("LoadNote.Vessel").
-		Preload("LoadNote.Line").
+		Preload("LoadNote").
 		Preload("UnloadNote").
 		Preload("DeparturePort").
 		Preload("DestinationPort").
@@ -487,22 +465,28 @@ func (s *orderServiceImpl) GetOrderTracking(ctx context.Context, orderID int64) 
 	if order.LoadNote == nil {
 		return nil, pkgerr.NotFound("load note not found")
 	}
+	lineID := *order.LoadNote.LineID
+	vesselID := *order.LoadNote.VesselID
+	voyageDate := order.LoadNote.VoyageDate
 
+	var vessel model.Vessel
 	vesselName := ""
-	if order.LoadNote.Vessel != nil {
-		vesselName = order.LoadNote.Vessel.VesselName
+	if err := s.db.First(&vessel, vesselID).Error; err == nil {
+		vesselName = vessel.VesselName
 	}
+
+	var line model.ShippingLine
 	lineName := ""
-	if order.LoadNote.Line != nil {
-		lineName = order.LoadNote.Line.LineName
+	if err := s.db.First(&line, lineID).Error; err == nil {
+		lineName = line.LineName
 	}
 
 	var departureBerthing, arrivalBerthing model.VoyageBerthing
 	s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
-		*order.LoadNote.LineID, *order.LoadNote.VesselID, order.LoadNote.VoyageDate, *order.DeparturePortID).
+		lineID, vesselID, voyageDate, *order.DeparturePortID).
 		First(&departureBerthing)
 	s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
-		*order.LoadNote.LineID, *order.LoadNote.VesselID, order.LoadNote.VoyageDate, *order.DestinationPortID).
+		lineID, vesselID, voyageDate, *order.DestinationPortID).
 		First(&arrivalBerthing)
 
 	statusName := map[int8]string{

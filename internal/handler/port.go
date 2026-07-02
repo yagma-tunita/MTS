@@ -58,6 +58,7 @@ func (h *PortHandler) GetPort(c *gin.Context) {
 func (h *PortHandler) ListPorts(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize < 1 { pageSize = 20 }; if pageSize > 100 { pageSize = 100 }
 	ports, total, err := h.svc.ListPorts(c.Request.Context(), page, pageSize)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list ports")
@@ -92,6 +93,7 @@ func (h *PortHandler) ListPortsByCity(c *gin.Context) {
 	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize < 1 { pageSize = 20 }; if pageSize > 100 { pageSize = 100 }
 	ports, total, err := h.svc.ListPortsByCity(c.Request.Context(), cityID, page, pageSize)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list ports")

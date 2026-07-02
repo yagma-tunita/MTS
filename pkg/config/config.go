@@ -17,6 +17,7 @@ type Config struct {
 	Log      LogConfig      `yaml:"log"`
 	JWT      JWTConfig      `yaml:"jwt"`
 	Freight  FreightConfig  `yaml:"freight"`
+	Notify   NotifyConfig   `yaml:"notify"`
 }
 
 type ServerConfig struct {
@@ -54,6 +55,28 @@ type JWTConfig struct {
 type FreightConfig struct {
 	BaseRatePerTonNm float64            `yaml:"base_rate_per_ton_nm"`
 	CargoTypeFactors map[string]float64 `yaml:"cargo_type_factors"`
+}
+
+type EmailNotifyConfig struct {
+	SMTPHost string `yaml:"smtp_host" env:"NOTIFY_EMAIL_SMTP_HOST"`
+	SMTPPort int    `yaml:"smtp_port" env:"NOTIFY_EMAIL_SMTP_PORT"`
+	Username string `yaml:"username" env:"NOTIFY_EMAIL_USERNAME"`
+	Password string `yaml:"password" env:"NOTIFY_EMAIL_PASSWORD"`
+	FromAddr string `yaml:"from_addr" env:"NOTIFY_EMAIL_FROM_ADDR"`
+	FromName string `yaml:"from_name" env:"NOTIFY_EMAIL_FROM_NAME"`
+}
+
+type SMSNotifyConfig struct {
+	Provider        string `yaml:"provider" env:"NOTIFY_SMS_PROVIDER"`
+	AccessKeyID     string `yaml:"access_key_id" env:"NOTIFY_SMS_ACCESS_KEY_ID"`
+	AccessKeySecret string `yaml:"access_key_secret" env:"NOTIFY_SMS_ACCESS_KEY_SECRET"`
+	SignName        string `yaml:"sign_name" env:"NOTIFY_SMS_SIGN_NAME"`
+	TemplateCode    string `yaml:"template_code" env:"NOTIFY_SMS_TEMPLATE_CODE"`
+}
+
+type NotifyConfig struct {
+	Email EmailNotifyConfig `yaml:"email"`
+	SMS   SMSNotifyConfig   `yaml:"sms"`
 }
 
 var globalConfig *Config
@@ -251,5 +274,30 @@ func overrideFromEnv(cfg *Config) {
 		if err := json.Unmarshal([]byte(v), &factors); err == nil {
 			cfg.Freight.CargoTypeFactors = factors
 		}
+	}
+
+	// Notify
+	if v := os.Getenv("NOTIFY_EMAIL_SMTP_HOST"); v != "" {
+		cfg.Notify.Email.SMTPHost = v
+	}
+	if v := os.Getenv("NOTIFY_EMAIL_SMTP_PORT"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Notify.Email.SMTPPort = i
+		}
+	}
+	if v := os.Getenv("NOTIFY_EMAIL_USERNAME"); v != "" {
+		cfg.Notify.Email.Username = v
+	}
+	if v := os.Getenv("NOTIFY_EMAIL_PASSWORD"); v != "" {
+		cfg.Notify.Email.Password = v
+	}
+	if v := os.Getenv("NOTIFY_EMAIL_FROM_ADDR"); v != "" {
+		cfg.Notify.Email.FromAddr = v
+	}
+	if v := os.Getenv("NOTIFY_EMAIL_FROM_NAME"); v != "" {
+		cfg.Notify.Email.FromName = v
+	}
+	if v := os.Getenv("NOTIFY_SMS_PROVIDER"); v != "" {
+		cfg.Notify.SMS.Provider = v
 	}
 }

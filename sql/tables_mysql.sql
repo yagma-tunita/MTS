@@ -306,8 +306,6 @@ CREATE INDEX idx_berth_delete_time ON berth(delete_time);
 CREATE INDEX idx_vessel_delete_time ON vessel(delete_time);
 CREATE INDEX idx_shipping_line_delete_time ON shipping_line(delete_time);
 CREATE INDEX idx_shipping_order_delete_time ON shipping_order(delete_time);
-CREATE INDEX idx_order_cargo_delete_time ON order_cargo(delete_time);
-
 -- =============================================================================
 -- End of script
 -- =============================================================================

@@ -1,5 +1,7 @@
 package biz
 
+import "sort"
+
 // VoyageInfo contains minimal data for a voyage candidate.
 type VoyageInfo struct {
 	LineID     int64
@@ -78,14 +80,9 @@ func (r *voyageRecommender) Recommend(voyages []VoyageInfo, startPortID, endPort
 		}
 	}
 
-	// sort by minRem descending (best first)
-	for i := 0; i < len(candidates)-1; i++ {
-		for j := i + 1; j < len(candidates); j++ {
-			if candidates[i].minRem < candidates[j].minRem {
-				candidates[i], candidates[j] = candidates[j], candidates[i]
-			}
-		}
-	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].minRem > candidates[j].minRem
+	})
 
 	result := make([]RecommendedVoyage, len(candidates))
 	for i, c := range candidates {

@@ -39,7 +39,6 @@ func (h *NotificationHandler) SendNotification(c *gin.Context) {
 		Title:    req.Title,
 		Content:  req.Content,
 		Data:     req.Data,
-		Read:     false,
 	}
 	if err := h.svc.Send(c.Request.Context(), notif); err != nil {
 		response.InternalServerError(c.Writer, err.Error())

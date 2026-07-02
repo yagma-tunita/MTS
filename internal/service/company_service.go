@@ -32,6 +32,7 @@ func (s *shipperCompanyServiceImpl) Register(ctx context.Context, company *model
 		logger.Error("failed to hash password", "error", err)
 		return err
 	}
+	plainPassword = ""
 	company.LoginPassword = hash
 	if err := s.dao.Create(company); err != nil {
 		logger.Error("failed to create shipper company", "error", err)
@@ -81,6 +82,8 @@ func (s *shipperCompanyServiceImpl) UpdatePassword(ctx context.Context, companyI
 		return err
 	}
 	company.LoginPassword = hash
+	oldPassword = ""
+	newPassword = ""
 	if err := s.dao.Update(company); err != nil {
 		logger.Error("failed to update company", "error", err)
 		return err
@@ -112,6 +115,7 @@ func (s *shippingCompanyServiceImpl) Register(ctx context.Context, company *mode
 		logger.Error("failed to hash password", "error", err)
 		return err
 	}
+	plainPassword = ""
 	company.LoginPassword = hash
 	if err := s.dao.Create(company); err != nil {
 		logger.Error("failed to create shipping company", "error", err)
@@ -161,6 +165,8 @@ func (s *shippingCompanyServiceImpl) UpdatePassword(ctx context.Context, company
 		return err
 	}
 	company.LoginPassword = hash
+	oldPassword = ""
+	newPassword = ""
 	if err := s.dao.Update(company); err != nil {
 		logger.Error("failed to update company", "error", err)
 		return err
@@ -168,3 +174,4 @@ func (s *shippingCompanyServiceImpl) UpdatePassword(ctx context.Context, company
 	logger.Info("shipping company password updated")
 	return nil
 }
+
