@@ -1,0 +1,374 @@
+╔══════════════════════════════════════════════════════════════╗
+║     MTS 服务 从头测试完整指南（含常见错误说明）              ║
+╚══════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第零步：关闭旧进程 → 清理数据库 → 建表 → 种子 → 启动
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 1. 服务在运行的话按 Ctrl+C 停掉
+
+# 2. 打开 MySQL 终端
+mysql -u root -p
+
+# 3. 在 mysql> 提示符下执行：
+DROP DATABASE IF EXISTS mts;
+CREATE DATABASE mts;
+USE mts;
+SOURCE D:/MTS/backend/sql/tables_mysql.sql;
+EXIT
+
+# 4. 回到 PowerShell，运行种子数据
+cd D:\MTS\backend
+go run .\cmd\seed\
+
+# 5. 启动服务
+go run .\app
+
+# 6. 新开一个 PowerShell 窗口，执行以下所有测试
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第一步：定义基础变量
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$base = "http://localhost:8080/api/v1"
+$login = Invoke-RestMethod -Uri "$base/auth/login" -Method Post -Body '{"username":"test001","password":"123456","role":"shipper"}' -ContentType "application/json"
+$h = @{Authorization="Bearer $($login.data.access_token)"}
+
+Write-Host "登录成功 user_id=$($login.data.user_id) Token=$($login.data.access_token.Substring(0,20))..." -ForegroundColor Green
+
+⚠ 常见错误：
+  · {"code":1001,"message":"invalid credentials"} → 用户名或密码错误，或 role 不对
+  · {"code":1000,"message":"invalid request body"} → JSON 格式错误，检查引号
+  · 请求无响应 → 服务未启动，先执行 go run .\app
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第二步：健康检查
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Invoke-RestMethod -Uri "http://localhost:8080/health" -Method Get
+
+✅ 预期返回：{"status":"ok"}
+⚠ 返回 404 → BUG-1 未修复？检查 net/protect/honeypot.go 中 /health 是否已被移除
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第三步：基础数据查询
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Write-Host "=== 港口列表 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/ports?page=1&page_size=10" -Method Get -Headers $h
+
+Write-Host "=== 单个港口 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/ports/1" -Method Get -Headers $h
+
+Write-Host "=== 船舶列表 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/vessels?page=1&page_size=10" -Method Get -Headers $h
+
+Write-Host "=== 单个船舶 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/vessels/1" -Method Get -Headers $h
+
+Write-Host "=== 航线列表 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/shipping-lines?page=1&page_size=10" -Method Get -Headers $h
+
+Write-Host "=== 航线港口序列 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/shipping-lines/1/port-sequence" -Method Get -Headers $h
+
+⚠ 常见错误：
+  · 返回空列表 [] → 没运行种子数据，执行 go run .\cmd\seed\
+  · {"code":1001} → token 过期，重新执行"第一步"
+  · {"code":2000} → 服务器内部错误，看服务端窗口的日志输出
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第四步：航次推荐
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Invoke-RestMethod -Uri "$base/voyages/recommend?start_port_id=1&end_port_id=3&required_ton=500" -Method Get -Headers $h
+
+✅ 预期返回：含 RemainingCapacity 的航次数组
+⚠ 返回空数组 → 无匹配航次，检查 seed 中的 voyage_cargo_note 和 voyage_berthing 数据
+⚠ {"code":1000,"message":"missing required parameters"} → start_port_id/end_port_id/required_ton 参数缺失
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第五步：创建订单
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$body = @{shipper_company_id=1;city_id=1;line_id=1;vessel_id=1;voyage_date="2026-07-15";start_port_id=1;end_port_id=3;cargo_items=@(@{cargo_name="钢材";cargo_type="bulk";quantity=100;weight_ton=500;volume_cub_m=200;unit_price=50;subtotal=5000});shipper_contact="张三-13800138000";consignee_contact="李四-13900139000"} | ConvertTo-Json -Depth 10
+
+$orderResp = Invoke-RestMethod -Uri "$base/orders" -Method Post -Body $body -ContentType "application/json" -Headers $h
+$orderResp | ConvertTo-Json -Depth 10
+$oid = $orderResp.data.order_id
+Write-Host "订单创建成功 ID=$oid" -ForegroundColor Green
+
+⚠ 常见错误：
+  · {"code":1002,"message":"shipper_company_id mismatch"}
+    原因：JWT 中的 user_id 不等于请求中的 shipper_company_id
+    解决：用 $login.data.user_id 的值作为 shipper_company_id
+
+  · {"code":1003,"message":"no LOAD cargo note for start port"}
+    原因：该航线/船舶/日期下，出发港没有 LOAD 类型的舱单记录
+    解决：检查 seed 数据是否正确，或先调用航次推荐确认可用航次
+
+  · {"code":1003,"message":"no UNLOAD cargo note for end port"}
+    同上，目的港没有 UNLOAD 类型的舱单记录
+
+  · {"code":1003,"message":"vessel not found or max deadweight missing"}
+    原因：vessel_id 不存在或船舶没有设置最大载重吨
+    解决：先查询船舶列表确认 vessel_id
+
+  · {"code":1003,"message":"shipping line not found or port sequence missing"}
+    原因：line_id 不存在或航线缺少港口序列
+    解决：先查询航线列表确认 line_id
+
+  · {"code":1004,"message":"insufficient capacity, remaining: xxx"}
+    原因：所选航段剩余运力不足
+    解决：减少 cargo_items 中的 weight_ton，或换个航次
+
+  · {"code":1005,"message":"failed to acquire lock, please retry"}
+    原因：并发锁冲突，同一航线/船舶/日期同时有多个订单在创建
+    解决：重试即可
+
+  · {"code":2000,"message":"failed to create order"}
+    原因：服务器内部错误，看服务端窗口的详细日志
+    常见子原因：
+      - SegmentCapacityUsage 模型与数据库表不匹配（delete_time 列）
+      - 外键约束失败（如 city_id 不存在）
+      - GORM 插入错误
+
+  · cargo_items 不能为空数组，至少 1 项
+  · voyage_date 必须格式为 YYYY-MM-DD
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第六步：订单查询
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Write-Host "=== 单个订单 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/orders/$oid" -Method Get -Headers $h
+
+Write-Host "=== 订单列表 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/orders?shipper_company_id=1&page=1&page_size=10" -Method Get -Headers $h
+
+Write-Host "=== 订单跟踪 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/orders/$oid/tracking" -Method Get -Headers $h
+
+⚠ 常见错误：
+  · {"code":1003,"message":"order not found"} → 订单 ID 不存在，检查 $oid
+  · {"code":1002,"message":"shipper_company_id mismatch"}
+    列表查询时：shipper_company_id 必须等于当前登录用户的 user_id
+    解决：用 $login.data.user_id 代替硬编码的 1
+  · 跟踪接口中 departure_planned/arrival_planned 为 null →
+    该航段没有对应的 voyage_berthing 记录
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第七步：更新状态（订单创建后默认 status=1）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 注意：订单创建后 order_status = 1（已确认），所以从 1→2 开始
+Write-Host "=== 开始运输 (1→2) ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/orders/$oid/status" -Method Put -Body '{"status":2}' -ContentType "application/json" -Headers $h
+
+Write-Host "=== 完成运输 (2→3) ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/orders/$oid/status" -Method Put -Body '{"status":3}' -ContentType "application/json" -Headers $h
+
+⚠ 状态转换规则（禁止跳转和回退）：
+  0(草稿) → 1(已确认) 或 4(取消)
+  1(已确认) → 2(运输中) 或 4(取消)
+  2(运输中) → 3(已完成) 或 4(取消)
+  3(已完成) → 不可再变（终态）
+  4(已取消) → 不可再变（终态）
+
+⚠ 常见错误：
+  · {"code":1000,"message":"invalid state transition"}
+    原因：非法状态转换，例如 1→1（同状态）、2→1（回退）、3→其他（终态）
+    解决：先 GET 查当前 order_status，再走合法路径
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第八步：再创建一个订单，然后取消
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$body2 = @{shipper_company_id=1;city_id=1;line_id=1;vessel_id=1;voyage_date="2026-07-15";start_port_id=1;end_port_id=3;cargo_items=@(@{cargo_name="木材";cargo_type="bulk";quantity=50;weight_ton=200;volume_cub_m=100;unit_price=30;subtotal=1500});shipper_contact="王五-13700137000";consignee_contact="赵六-13600136000"} | ConvertTo-Json -Depth 10
+$o2 = Invoke-RestMethod -Uri "$base/orders" -Method Post -Body $body2 -ContentType "application/json" -Headers $h
+$oid2 = $o2.data.order_id
+Write-Host "第二个订单 ID=$oid2" -ForegroundColor Green
+
+Invoke-RestMethod -Uri "$base/orders/$oid2/cancel" -Method Post -Headers $h
+Write-Host "已取消" -ForegroundColor Yellow
+
+⚠ 常见错误：
+  · {"code":1004,"message":"order already cancelled"} → 订单已经取消过，不能重复取消
+  · {"code":1003,"message":"order not found"} → 订单 ID 不存在
+  · 取消后该订单不可再更新状态
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第九步：刷新 Token
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$refreshBody = @{ refresh_token = $login.data.refresh_token } | ConvertTo-Json -Compress
+$refreshResp = Invoke-RestMethod -Uri "$base/auth/refresh" -Method Post -Body $refreshBody -ContentType "application/json"
+$newToken = $refreshResp.data.access_token
+Write-Host "新 Token: $($newToken.Substring(0,20))..." -ForegroundColor Green
+
+⚠ 常见错误：
+  · {"code":1001,"message":"invalid refresh token"} → refresh_token 已过期（7天）或无效
+  · PowerShell 转义错误 → 不要手写 JSON 字符串，用上面的 hashtable 写法
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第十步：管理员操作
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$adminLogin = Invoke-RestMethod -Uri "$base/auth/login" -Method Post -Body '{"username":"admin","password":"admin123","role":"admin"}' -ContentType "application/json"
+$ah = @{Authorization="Bearer $($adminLogin.data.access_token)"}
+
+Write-Host "=== 创建子管理员 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/admin/register" -Method Post -Body '{"username":"admin2","password":"admin123","real_name":"二号管理员","role":2}' -ContentType "application/json" -Headers $ah
+
+Write-Host "=== 管理员发通知 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/admin/notifications" -Method Post -Body '{"user_id":1,"role":"shipper","type":"order_created","title":"测试通知","content":"这是一条系统通知"}' -ContentType "application/json" -Headers $ah
+
+Write-Host "=== 管理员改密码 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/admin/password/1" -Method Post -Body '{"old_password":"admin123","new_password":"newadmin123"}' -ContentType "application/json" -Headers $ah
+
+⚠ 常见错误：
+  · {"code":1002,"message":"insufficient permissions"} → 当前用户不是 admin 角色
+    解决：用 admin/admin123 登录，role="admin"
+  · {"code":1001,"message":"invalid or expired token"} → token 过期
+  · 创建子管理员时 role=2（普通管理员），role=1 为超级管理员
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第十一步：查询通知
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Invoke-RestMethod -Uri "$base/notifications?page=1&page_size=10" -Method Get -Headers $h
+
+⚠ 注意事项：
+  · 通知存储在内存（go-cache）中，服务重启后通知会丢失
+  · 返回的是当前 JWT 用户（user_id+role）的通知，别人发的不在你的列表
+  · 只能看到管理员发给你的通知，看不到你发给别人的
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第十二步：报表
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Invoke-RestMethod -Uri "$base/reports/orders?start_date=2026-01-01&end_date=2026-12-31" -Method Get -Headers $h
+
+Invoke-RestMethod -Uri "$base/reports/voyage-utilization?line_id=1&vessel_id=1&voyage_date=2026-07-15" -Method Get -Headers $h
+
+⚠ 常见错误：
+  · {"code":1000,"message":"start_date and end_date are required"} → 缺少日期参数
+  · {"code":1000,"message":"invalid start_date"} → 日期格式不是 YYYY-MM-DD
+  · 订单统计基于 create_time 筛选，不是基于 voyage_date
+  · 航次利用率查询如果 vessel_id 不存在会返回 500
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第十三步：Excel 导出（服务器自动存到 backend/excel/ 目录）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 导出后会自动生成文件（同时浏览器下载）：
+#   D:\MTS\backend\excel\mts_YYYYMMDD_ports.xlsx
+#   D:\MTS\backend\excel\mts_YYYYMMDD_vessels.xlsx
+#   D:\MTS\backend\excel\mts_YYYYMMDD_shipping_lines.xlsx
+#   D:\MTS\backend\excel\mts_YYYYMMDD_orders.xlsx
+
+Invoke-RestMethod -Uri "$base/export/ports" -Method Get -Headers $h -OutFile "$env:TEMP\mts_ports.xlsx"
+Invoke-RestMethod -Uri "$base/export/vessels" -Method Get -Headers $h -OutFile "$env:TEMP\mts_vessels.xlsx"
+Invoke-RestMethod -Uri "$base/export/orders?shipper_company_id=1" -Method Get -Headers $h -OutFile "$env:TEMP\mts_orders.xlsx"
+Write-Host "Excel 已下载到 $env:TEMP，同时已保存到服务端 backend/excel/" -ForegroundColor Green
+
+⚠ 常见错误：
+  · 浏览器下载的文件名为 API 指定的 filename（如 ports.xlsx），不代表服务器文件名
+  · 服务器保存的文件在 backend/excel/mts_YYYYMMDD_类型.xlsx
+  · 如果 excel/ 目录不存在，代码会自动创建
+  · 导出订单需要 shipper_company_id 参数
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第十四步：WebSocket 测试
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 在浏览器 F12 控制台执行（先用 test001 登录获取 token）：
+var token = "把第一步打印的完整 access_token 粘贴到这里";
+var ws = new WebSocket("ws://localhost:8080/ws?token=" + token);
+ws.onopen = function() { console.log("已连接"); };
+ws.onmessage = function(e) { console.log("收到:", JSON.parse(e.data)); };
+ws.onerror = function(e) { console.error("错误:", e); };
+ws.onclose = function() { console.log("已断开"); };
+
+# 然后在另一个窗口更新订单状态，WebSocket 会收到推送消息
+
+⚠ 常见错误：
+  · 连接立即断开 → token 过期或无效，重新登录获取新 token
+  · 连接被拒绝 401 → WebSocket 路径是 /ws 不是在 /api/v1 下
+  · 收不到推送 → 更新订单状态时，推送目标 user_id 必须与 WebSocket 登录的一致
+  · 生产环境 WebSocket 需要独立的负载均衡策略
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第十五步：注册新用户
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Write-Host "=== 注册新货主 ===" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$base/shipper/register" -Method Post -Body '{"company_name":"新货主","login_username":"newshipper","password":"123456"}' -ContentType "application/json"
+
+Write-Host "=== 新货主登录 ===" -ForegroundColor Cyan
+$newLogin = Invoke-RestMethod -Uri "$base/auth/login" -Method Post -Body '{"username":"newshipper","password":"123456","role":"shipper"}' -ContentType "application/json"
+Write-Host "新货主 user_id=$($newLogin.data.user_id)" -ForegroundColor Green
+
+Write-Host "=== 新货主改密码 ===" -ForegroundColor Cyan
+$newH = @{Authorization="Bearer $($newLogin.data.access_token)"}
+Invoke-RestMethod -Uri "$base/shipper/password/$($newLogin.data.user_id)" -Method Post -Body '{"old_password":"123456","new_password":"abcdef"}' -ContentType "application/json" -Headers $newH
+
+⚠ 常见错误：
+  · {"code":2000,"message":"failed to register"}
+    原因：用户名已被注册（唯一索引冲突），或密码强度不足（需 ≥6 位）
+    解决：换一个 login_username
+  · {"code":1000,"message":"Key: 'registerShipperRequest.Password' Error:...len=3"}
+    原因：密码太短，至少 6 位
+  · 改密码时 :id 必须等于当前登录用户的 user_id，否则 403
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第十六步：Swagger 文档
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 浏览器打开：
+http://localhost:8080/swagger/index.html
+
+# 或在 PowerShell 查看 OpenAPI JSON：
+Invoke-RestMethod -Uri "http://localhost:8080/swagger/doc.json" -Method Get
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第十七步：邮件发送测试（需配置 QQ 邮箱 SMTP）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 前置条件：config.yaml 已配置 notify.email（smtp.qq.com:465 + 授权码）
+# 目标邮箱填你想收到邮件的地址，可以填自己的 QQ 邮箱
+
+$adminLogin = Invoke-RestMethod -Uri "$base/auth/login" -Method Post -Body '{"username":"admin","password":"admin123","role":"admin"}' -ContentType "application/json"
+$ah = @{Authorization="Bearer $($adminLogin.data.access_token)"}
+
+$body = @{
+  user_id = 1
+  role    = "shipper"
+  type    = "order_created"
+  title   = "MTS系统测试邮件"
+  content = "这是一封来自MTS系统的测试邮件，收到说明SMTP配置正确。"
+    data    = @{ email = "your_qq_number@qq.com" }
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Uri "$base/admin/notifications" -Method Post -Body $body -ContentType "application/json" -Headers $ah
+
+⚠ 常见错误：
+  · 邮件没收到 → 检查服务端窗口是否打印 "email send failed" 及具体错误
+  · 没有报错但邮件没到 → 可能在垃圾箱，或 QQ 邮箱的 SMTP 频率限制
+  · 授权码错误 → 去 QQ邮箱→设置→账户→重新生成授权码
+  · from_name 含中文可能被拒收，保持 "MTS System" 即可
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+附：常见 HTTP 状态码速查
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+200 → 成功（业务 code=0）
+400 → 请求参数错误（业务 code=1000）
+401 → 未授权（业务 code=1001），token 缺失/过期/无效
+403 → 权限不足（业务 code=1002），角色不匹配或 user_id 不匹配
+404 → 资源未找到（业务 code=1003）
+409 → 冲突（业务 code=1004），运力不足/重复取消
+429 → 限流（业务 code=1005），请求太频繁
+500 → 服务器内部错误（业务 code=2000），看服务端日志
+

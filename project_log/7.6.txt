@@ -1,0 +1,32 @@
+2026-07-06 更新说明
+
+================================================================================
+1. 修复：JOIN 查询中 delete_time 字段歧义导致 SQL 报错
+================================================================================
+
+文件：internal/dao/dao.go
+
+错误日志：
+  Error 1052 (23000): Column 'delete_time' in where clause is ambiguous
+  SELECT count(*) FROM `shipping_order` JOIN voyage_cargo_note ...
+  WHERE ... AND delete_time IS NULL
+
+根因：
+  NotDeleted scope（dao.go:7-12）在 db.Statement.Table 为空时退化到无前缀的
+  "delete_time IS NULL"。GORM 的 db.Model() 不会立即填充 Statement.Table，
+  导致 JOIN 查询中生成没有表前缀的 delete_time 条件，而 shipping_line 也
+  有同名 delete_time 字段，MySQL 无法区分，报歧义错误。
+
+修复：
+  NotDeleted scope 在 Table 为空且 Model 不为空时，调用
+  db.Statement.Parse(db.Statement.Model) 主动解析表名，确保生成的
+  WHERE 条件带有正确表前缀（如 shipping_order.delete_time IS NULL）。
+
+影响接口：
+  GET /api/v1/orders（shipping 角色）、CheckOrderBelongsToShippingCompany
+  以及 DAO 层的 ListByShippingCompany
+
+受影响位置（无需修改，修复在 NotDeleted scope 后自动生效）：
+  - internal/service/order_service.go:607-610
+  - internal/service/order_service.go:631-635
+  - internal/dao/shipping_order_dao.go:69-72

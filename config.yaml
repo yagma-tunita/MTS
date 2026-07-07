@@ -1,0 +1,49 @@
+server:
+  port: "8080"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 60s
+
+database:
+  driver: mysql
+  dsn: "root:111322@qq.comxyZ@tcp(127.0.0.1:3306)/mts?charset=utf8mb4&parseTime=True&loc=Local"
+  max_open_conns: 25
+  max_idle_conns: 10
+  conn_max_lifetime: 5m
+  conn_max_idle_time: 5m
+
+log:
+  level: debug
+  format: text
+  output_path: "logs/app.log"
+  max_size: 100
+  max_backups: 10
+  max_age: 30
+  compress: true
+
+jwt:
+  secret: "mts-production-secret-key-change-in-production"
+  access_expire: 24h
+  refresh_expire: 168h
+
+freight:
+  base_rate_per_ton_nm: 0.05
+  cargo_type_factors:
+    bulk: 1.0
+    container: 1.2
+    liquid: 1.1
+
+notify:
+  email:
+    smtp_host: "smtp.qq.com"
+    smtp_port: 465
+    username: "your_qq_number@qq.com"
+    password: "your_smtp_authorization_code"
+    from_addr: "your_qq_number@qq.com"
+    from_name: "MTS System"
+  sms:
+    provider: "console"
+    access_key_id: ""
+    access_key_secret: ""
+    sign_name: ""
+    template_code: ""

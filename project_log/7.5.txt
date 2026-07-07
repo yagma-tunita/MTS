@@ -1,0 +1,45 @@
+2026-07-05 更新说明
+
+================================================================================
+1. 新增：管理员删除货主/船运公司账号
+================================================================================
+
+文件：internal/service/company_service.go, internal/handler/company.go, net/router/router.go
+
+此前 DAO 层已有 Delete() 方法（软删除），但未被任何 Service/Handler 调用，属于死代码。
+本次补充完整链路：Service → Handler → Router。
+
+新增接口：
+  POST /api/v1/admin/shipper/:id/delete    # 管理员删除货主公司（软删除）
+  POST /api/v1/admin/shipping/:id/delete   # 管理员删除船运公司（软删除）
+
+Service 层：
+  - ShipperCompanyService 和 ShippingCompanyService 接口新增 Delete(ctx, id) error
+  - 实现逻辑：先调用 GetByID 检查公司是否存在（未删除），存在则调用 DAO.Delete
+    设置 delete_time = NOW()
+
+Handler 层：
+  - ShipperCompanyHandler 和 ShippingCompanyHandler 新增 Delete 方法
+  - 解析路径参数 :id，调用 svc.Delete
+
+Router 层：
+  - admin 路由组新增两条路由，受 RequireRole("admin") 中间件保护
+
+权限控制：
+  - 仅 admin 角色可调用（路由级中间件）
+  - 非 admin 角色返回 403 Forbidden
+  - 重复删除返回 404（已删除的记录被 NotDeleted scope 过滤）
+  - 不存在的 ID 返回 404
+
+
+================================================================================
+2. 文档同步更新
+================================================================================
+
+更新文件列表：
+  - AGENTS.md
+  - README.md
+  - forfrontend/forfrontend.md
+  - internal/handler/HANDLER_MODULE_DESCRIPTION.md
+  - internal/service/SERVICE_MODULE_DESCRIPTION.md
+  - project_log/7.5.txt（本文档）
