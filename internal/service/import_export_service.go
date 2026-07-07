@@ -73,7 +73,7 @@ func saveExcel(data []byte, suffix string) error {
 
 // ExportPorts 导出所有港口为 Excel。
 func (s *importExportServiceImpl) ExportPorts(ctx context.Context) ([]byte, error) {
-	ports, _, err := s.portDAO.List(1, 10000)
+	ports, _, err := s.portDAO.List(1, 10000, "")
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func (s *importExportServiceImpl) ImportPorts(ctx context.Context, rows [][]stri
 
 // ExportVessels 导出所有船舶为 Excel。
 func (s *importExportServiceImpl) ExportVessels(ctx context.Context) ([]byte, error) {
-	vessels, _, err := s.vesselDAO.List(1, 10000)
+	vessels, _, err := s.vesselDAO.List(1, 10000, "")
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (s *importExportServiceImpl) ImportVessels(ctx context.Context, rows [][]st
 
 // ExportShippingLines 导出所有航线为 Excel。
 func (s *importExportServiceImpl) ExportShippingLines(ctx context.Context) ([]byte, error) {
-	lines, _, err := s.shippingLineDAO.List(1, 10000)
+	lines, _, err := s.shippingLineDAO.List(1, 10000, "")
 	if err != nil {
 		return nil, err
 	}

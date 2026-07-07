@@ -33,7 +33,12 @@ func (d *cityDAOImpl) GetByID(id int64) (*model.City, error) {
 }
 
 func (d *cityDAOImpl) Update(city *model.City) error {
-	return d.db.Save(city).Error
+	updates := map[string]interface{}{}
+	if city.CityName != "" { updates["city_name"] = city.CityName }
+	if city.Country != nil { updates["country"] = *city.Country }
+	if city.CountryCode != nil { updates["country_code"] = *city.CountryCode }
+	if city.Timezone != nil { updates["timezone"] = *city.Timezone }
+	return d.db.Model(&model.City{}).Where("city_id = ?", city.CityID).Updates(updates).Error
 }
 
 func (d *cityDAOImpl) Delete(id int64) error {
@@ -53,6 +58,6 @@ func (d *cityDAOImpl) List(page, pageSize int, cityName string) ([]model.City, i
 		return nil, 0, err
 	}
 	offset := (page - 1) * pageSize
-	err := query.Offset(offset).Limit(pageSize).Find(&cities).Error
+	err := query.Order("city_name ASC").Offset(offset).Limit(pageSize).Find(&cities).Error
 	return cities, total, err
 }

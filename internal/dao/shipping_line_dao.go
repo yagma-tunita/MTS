@@ -12,7 +12,7 @@ type ShippingLineDAO interface {
 	Update(line *model.ShippingLine) error
 	Delete(id int64) error
 	ListByShippingCompany(companyID int64, page, pageSize int) ([]model.ShippingLine, int64, error)
-	List(page, pageSize int) ([]model.ShippingLine, int64, error)
+	List(page, pageSize int, keyword string) ([]model.ShippingLine, int64, error)
 }
 
 type shippingLineDAOImpl struct {
@@ -36,7 +36,16 @@ func (d *shippingLineDAOImpl) GetByID(id int64) (*model.ShippingLine, error) {
 }
 
 func (d *shippingLineDAOImpl) Update(line *model.ShippingLine) error {
-	return d.db.Save(line).Error
+	updates := map[string]interface{}{
+		"line_name": line.LineName,
+	}
+	if line.ShippingCompanyID != nil { updates["shipping_company_id"] = *line.ShippingCompanyID }
+	if line.PortSequence != nil { updates["port_sequence"] = *line.PortSequence }
+	if line.TotalDistanceNm != nil { updates["total_distance_nm"] = *line.TotalDistanceNm }
+	if line.DeparturePortName != nil { updates["departure_port_name"] = *line.DeparturePortName }
+	if line.DestinationPortName != nil { updates["destination_port_name"] = *line.DestinationPortName }
+	if line.Description != nil { updates["description"] = *line.Description }
+	return d.db.Model(&model.ShippingLine{}).Where("line_id = ?", line.LineID).Omit("ShippingCompany").Updates(updates).Error
 }
 
 func (d *shippingLineDAOImpl) Delete(id int64) error {
@@ -59,10 +68,13 @@ func (d *shippingLineDAOImpl) ListByShippingCompany(companyID int64, page, pageS
 	return lines, total, err
 }
 
-func (d *shippingLineDAOImpl) List(page, pageSize int) ([]model.ShippingLine, int64, error) {
+func (d *shippingLineDAOImpl) List(page, pageSize int, keyword string) ([]model.ShippingLine, int64, error) {
 	var lines []model.ShippingLine
 	var total int64
 	query := d.db.Model(&model.ShippingLine{}).Scopes(NotDeleted)
+	if keyword != "" {
+		query = query.Where("line_name LIKE ?", "%"+keyword+"%")
+	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

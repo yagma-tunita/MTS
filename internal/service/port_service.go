@@ -14,7 +14,7 @@ import (
 // PortService 港口服务接口，支持查询单个、列表、按城市查询、增删改，带缓存。
 type PortService interface {
 	GetPortByID(ctx context.Context, id int64) (*model.Port, error)
-	ListPorts(ctx context.Context, page, pageSize int) ([]model.Port, int64, error)
+	ListPorts(ctx context.Context, page, pageSize int, keyword string) ([]model.Port, int64, error)
 	ListPortsByCity(ctx context.Context, cityID int64, page, pageSize int) ([]model.Port, int64, error)
 	CreatePort(ctx context.Context, port *model.Port) error
 	UpdatePort(ctx context.Context, port *model.Port) error
@@ -61,7 +61,7 @@ func (s *portServiceImpl) GetPortByID(ctx context.Context, id int64) (*model.Por
 }
 
 // ListPorts 分页查询港口列表（缓存版）。key 中带 page+pageSize，不同分页参数独立缓存
-func (s *portServiceImpl) ListPorts(ctx context.Context, page, pageSize int) ([]model.Port, int64, error) {
+func (s *portServiceImpl) ListPorts(ctx context.Context, page, pageSize int, keyword string) ([]model.Port, int64, error) {
 	logger := Logger.With("method", "ListPorts", "page", page, "page_size", pageSize)
 	logger.Debug("listing ports")
 
@@ -80,7 +80,7 @@ func (s *portServiceImpl) ListPorts(ctx context.Context, page, pageSize int) ([]
 	}
 
 	// 缓存未命中，调 DAO 查询数据库
-	ports, total, err := s.dao.List(page, pageSize)
+	ports, total, err := s.dao.List(page, pageSize, keyword)
 	if err != nil {
 		logger.Error("failed to list ports", "error", err)
 		return nil, 0, err
@@ -101,14 +101,24 @@ func (s *portServiceImpl) CreatePort(ctx context.Context, port *model.Port) erro
 	return s.dao.Create(port)
 }
 
-// UpdatePort 更新港口信息。
+// UpdatePort 更新港口信息，同时清除缓存确保下次读取到最新数据。
 func (s *portServiceImpl) UpdatePort(ctx context.Context, port *model.Port) error {
-	return s.dao.Update(port)
+	err := s.dao.Update(port)
+	if err == nil {
+		cache.Delete(fmt.Sprintf("port:id:%d", port.PortID))
+		cache.Delete(fmt.Sprintf("ports:list:%d:%d", 1, 10))
+		cache.Delete(fmt.Sprintf("ports:list:%d:%d", 2, 10))
+	}
+	return err
 }
 
 // DeletePort 软删除港口。
 func (s *portServiceImpl) DeletePort(ctx context.Context, id int64) error {
-	return s.dao.Delete(id)
+	err := s.dao.Delete(id)
+	if err == nil {
+		cache.Delete(fmt.Sprintf("port:id:%d", id))
+	}
+	return err
 }
 
 // ListPortsByCity 按城市筛选港口（缓存版）。key 含 cityID，不同城市独立缓存

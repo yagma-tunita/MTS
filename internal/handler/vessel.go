@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"strconv"
@@ -83,7 +83,8 @@ func (h *VesselHandler) ListVessels(c *gin.Context) {
 		}
 	}
 
-	vessels, total, err := h.svc.ListVessels(c.Request.Context(), page, pageSize)
+	keyword := c.Query("keyword")
+	vessels, total, err := h.svc.ListVessels(c.Request.Context(), page, pageSize, keyword)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list vessels")
 		return
@@ -121,14 +122,14 @@ func (h *VesselHandler) UpdateVessel(c *gin.Context) {
 		response.BadRequest(c.Writer, "invalid request body")
 		return
 	}
-	if v, ok := req["vessel_name"]; ok { existing.VesselName = v.(string) }
-	if v, ok := req["vessel_type"]; ok { existing.VesselType = strPtr(v.(string)) }
-	if v, ok := req["imo_number"]; ok { existing.IMONumber = v.(string) }
-	if v, ok := req["max_deadweight_ton"]; ok { f := v.(float64); existing.MaxDeadweightTon = &f }
-	if v, ok := req["gross_tonnage"]; ok { f := v.(float64); existing.GrossTonnage = &f }
-	if v, ok := req["speed_knot"]; ok { f := v.(float64); existing.SpeedKnot = &f }
-	if v, ok := req["container_teu"]; ok { i := int32(v.(float64)); existing.ContainerTEU = &i }
-	if v, ok := req["is_available"]; ok { existing.IsAvailable = int8(v.(float64)) }
+	if v, ok := req["vessel_name"]; ok && v != nil { existing.VesselName = v.(string) }
+	if v, ok := req["vessel_type"]; ok && v != nil { existing.VesselType = strPtr(v.(string)) }
+	if v, ok := req["imo_number"]; ok && v != nil { existing.IMONumber = v.(string) }
+	if v, ok := req["max_deadweight_ton"]; ok && v != nil { f := v.(float64); existing.MaxDeadweightTon = &f }
+	if v, ok := req["gross_tonnage"]; ok && v != nil { f := v.(float64); existing.GrossTonnage = &f }
+	if v, ok := req["speed_knot"]; ok && v != nil { f := v.(float64); existing.SpeedKnot = &f }
+	if v, ok := req["container_teu"]; ok && v != nil { i := int32(v.(float64)); existing.ContainerTEU = &i }
+	if v, ok := req["is_available"]; ok && v != nil { existing.IsAvailable = int8(v.(float64)) }
 	if err := h.svc.UpdateVessel(c.Request.Context(), existing); err != nil {
 		response.InternalServerError(c.Writer, "failed to update vessel")
 		return

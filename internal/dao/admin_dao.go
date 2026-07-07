@@ -12,7 +12,7 @@ type AdminDAO interface {
 	GetByUsername(username string) (*model.Admin, error)
 	Update(admin *model.Admin) error
 	Delete(id int64) error
-	List(page, pageSize int) ([]model.Admin, int64, error)
+	List(page, pageSize int, keyword string) ([]model.Admin, int64, error)
 }
 
 type adminDAOImpl struct {
@@ -51,10 +51,13 @@ func (d *adminDAOImpl) Delete(id int64) error {
 		Update("delete_time", gorm.Expr("NOW()")).Error
 }
 
-func (d *adminDAOImpl) List(page, pageSize int) ([]model.Admin, int64, error) {
+func (d *adminDAOImpl) List(page, pageSize int, keyword string) ([]model.Admin, int64, error) {
 	var admins []model.Admin
 	var total int64
 	query := d.db.Model(&model.Admin{}).Scopes(NotDeleted)
+	if keyword != "" {
+		query = query.Where("(username LIKE ? OR real_name LIKE ?)", "%"+keyword+"%", "%"+keyword+"%")
+	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

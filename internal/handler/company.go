@@ -24,8 +24,9 @@ func NewShipperCompanyHandler(svc service.ShipperCompanyService) *ShipperCompany
 
 // shipperListRequest 货主公司列表查询参数。
 type shipperListRequest struct {
-	Page     int `form:"page" validate:"omitempty,min=1"`
-	PageSize int `form:"page_size" validate:"omitempty,min=1,max=100"`
+	Page     int    `form:"page" validate:"omitempty,min=1"`
+	PageSize int    `form:"page_size" validate:"omitempty,min=1,max=100"`
+	Keyword  string `form:"keyword"`
 }
 
 // List 管理员分页查询货主公司列表。
@@ -41,7 +42,7 @@ func (h *ShipperCompanyHandler) List(c *gin.Context) {
 	if req.PageSize < 1 || req.PageSize > 100 {
 		req.PageSize = 20
 	}
-	companies, total, err := h.svc.List(c.Request.Context(), req.Page, req.PageSize)
+	companies, total, err := h.svc.List(c.Request.Context(), req.Page, req.PageSize, req.Keyword)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list shipper companies")
 		return
@@ -189,8 +190,9 @@ func NewShippingCompanyHandler(svc service.ShippingCompanyService) *ShippingComp
 
 // shippingListRequest 船公司列表查询参数。
 type shippingListRequest struct {
-	Page     int `form:"page" validate:"omitempty,min=1"`
-	PageSize int `form:"page_size" validate:"omitempty,min=1,max=100"`
+	Page     int    `form:"page" validate:"omitempty,min=1"`
+	PageSize int    `form:"page_size" validate:"omitempty,min=1,max=100"`
+	Keyword  string `form:"keyword"`
 }
 
 // List 管理员分页查询船公司列表。
@@ -206,7 +208,7 @@ func (h *ShippingCompanyHandler) List(c *gin.Context) {
 	if req.PageSize < 1 || req.PageSize > 100 {
 		req.PageSize = 20
 	}
-	companies, total, err := h.svc.List(c.Request.Context(), req.Page, req.PageSize)
+	companies, total, err := h.svc.List(c.Request.Context(), req.Page, req.PageSize, req.Keyword)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list shipping companies")
 		return

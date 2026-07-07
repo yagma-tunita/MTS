@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"backend/internal/service"
 	"backend/pkg/errors"
@@ -235,7 +236,10 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 // updateOrderStatusRequest 更新订单状态的请求体。
 // Status 取值范围：0(草稿) 1(已确认) 2(运输中) 3(已完成) 4(已取消)
 type updateOrderStatusRequest struct {
-	Status int8 `json:"status" validate:"required,min=0,max=4"`
+	Status     int8   `json:"status" validate:"required,min=0,max=4"`
+	PortID     int64  `json:"port_id,omitempty"`       // 操作的港口ID（离港/到港），空则使用订单的出发港或目的港
+	ActualTime string `json:"actual_time,omitempty"`   // 实际到港/离港时间，格式 "2006-01-02 15:04:05"
+	Notes      string `json:"notes,omitempty"`         // 操作备注
 }
 
 // UpdateOrderStatus 更新订单状态。
@@ -273,7 +277,18 @@ func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 		response.BadRequest(c.Writer, err.Error())
 		return
 	}
-	err = h.svc.UpdateOrderStatus(c.Request.Context(), id, req.Status)
+	var actualTime *time.Time
+	if req.ActualTime != "" {
+		t, err := time.Parse("2006-01-02 15:04:05", req.ActualTime)
+		if err == nil {
+			actualTime = &t
+		}
+	}
+	var portID *int64
+	if req.PortID > 0 {
+		portID = &req.PortID
+	}
+	err = h.svc.UpdateOrderStatus(c.Request.Context(), id, req.Status, actualTime, req.Notes, portID)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			response.ErrorWithCode(c.Writer, appErr.Code, appErr.Message)
@@ -283,6 +298,37 @@ func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 		return
 	}
 	response.Success(c.Writer, gin.H{"message": "order status updated"})
+}
+
+// RecordPortVisit 记录运输中订单在某个港口的到港/离港时间及货物操作。
+func (h *OrderHandler) RecordPortVisit(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		response.BadRequest(c.Writer, "invalid order id")
+		return
+	}
+	if companyID, ok := getShippingCompanyID(c); ok {
+		belongs, err := h.svc.CheckOrderBelongsToShippingCompany(c.Request.Context(), id, companyID)
+		if err != nil || !belongs {
+			response.ErrorWithCode(c.Writer, errors.CodeNotFound, "order not found")
+			return
+		}
+	}
+	var req service.PortVisitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c.Writer, "invalid request body")
+		return
+	}
+	if err := h.svc.RecordPortVisit(c.Request.Context(), id, &req); err != nil {
+		if appErr, ok := err.(*errors.AppError); ok {
+			response.ErrorWithCode(c.Writer, appErr.Code, appErr.Message)
+			return
+		}
+		response.InternalServerError(c.Writer, "failed to record port visit")
+		return
+	}
+	response.Success(c.Writer, gin.H{"message": "port visit recorded"})
 }
 
 // ListOrders 分页查询订单列表。

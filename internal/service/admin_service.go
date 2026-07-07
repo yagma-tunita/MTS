@@ -14,7 +14,7 @@ type AdminService interface {
 	Create(ctx context.Context, admin *model.Admin, plainPassword string) error
 	Login(ctx context.Context, username, plainPassword string) (*model.Admin, error)
 	UpdatePassword(ctx context.Context, adminID int64, oldPassword, newPassword string) error
-	List(ctx context.Context, page, pageSize int) ([]model.Admin, int64, error)
+	List(ctx context.Context, page, pageSize int, keyword string) ([]model.Admin, int64, error)
 }
 
 // adminServiceImpl 是 AdminService 接口的私有实现。
@@ -66,8 +66,8 @@ func (s *adminServiceImpl) Login(ctx context.Context, username, plainPassword st
 }
 
 // List 分页查询管理员列表。
-func (s *adminServiceImpl) List(ctx context.Context, page, pageSize int) ([]model.Admin, int64, error) {
-	return s.dao.List(page, pageSize)
+func (s *adminServiceImpl) List(ctx context.Context, page, pageSize int, keyword string) ([]model.Admin, int64, error) {
+	return s.dao.List(page, pageSize, keyword)
 }
 
 // UpdatePassword 验证旧密码后更新管理员密码。

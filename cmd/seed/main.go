@@ -216,7 +216,7 @@ func seed(db *gorm.DB) {
 	// ===== 15 Shipping Lines =====
 	type lData struct{ name, depPort, destPort, desc, seq string; dist float64; cid int64 }
 	linesData := []lData{
-		{name: "中国-南美东海岸航线 (Guangzhou-Santos)", depPort: "Guangzhou Nansha Port", destPort: "Santos Port", desc: "经新加坡、孟买、德班至巴西桑托斯", seq: "[1,6,7,9,13]", dist: 11000, cid: cosco.CompanyID},
+		{name: "中国-南美东海岸航线 (Guangzhou-Rio)", depPort: "Guangzhou Nansha Port", destPort: "Rio de Janeiro Port", desc: "经新加坡、孟买、德班、桑托斯至里约热内卢", seq: "[1,6,7,9,13,14]", dist: 12000, cid: cosco.CompanyID},
 		{name: "亚欧航线 (Shanghai-Rotterdam via Suez)", depPort: "Shanghai Yangshan Port", destPort: "Rotterdam Port", desc: "亚洲至欧洲主力航线", seq: "[2,6,17,18,11]", dist: 8500, cid: cosco.CompanyID},
 		{name: "东北亚-欧洲航线 (Busan-Rotterdam)", depPort: "Busan Port", destPort: "Rotterdam Port", desc: "连接韩日与欧洲", seq: "[16,15,2,6,11]", dist: 9200, cid: maersk.CompanyID},
 		{name: "亚洲-非洲航线 (Hong Kong-Durban)", depPort: "Hong Kong Port", destPort: "Durban Port", desc: "经东南亚至南部非洲", seq: "[3,6,17,7,9]", dist: 7800, cid: msc.CompanyID},
@@ -226,7 +226,7 @@ func seed(db *gorm.DB) {
 		{name: "东北亚支线 (Shanghai-Hong Kong)", depPort: "Shanghai Yangshan Port", destPort: "Hong Kong Port", desc: "中国沿海支线", seq: "[2,4,5,3]", dist: 2800, cid: cosco.CompanyID},
 		{name: "泛太平洋-南美航线 (Shanghai-Santos)", depPort: "Shanghai Yangshan Port", destPort: "Santos Port", desc: "跨太平洋至巴西", seq: "[2,16,15,19,13]", dist: 12000, cid: cosco.CompanyID},
 		{name: "地中海-中国航线 (Piraeus-Guangzhou)", depPort: "Piraeus Port", destPort: "Guangzhou Nansha Port", desc: "地中海经迪拜至中国", seq: "[18,17,6,1]", dist: 7800, cid: msc.CompanyID},
-		{name: "欧洲-北美西海岸航线 (Rotterdam-LA)", depPort: "Rotterdam Port", destPort: "Los Angeles Port", desc: "跨大西洋至美西", seq: "[11,12,19]", dist: 9500, cid: maersk.CompanyID},
+		{name: "欧洲-北美西海岸航线 (Rotterdam-Long Beach)", depPort: "Rotterdam Port", destPort: "Long Beach Port", desc: "跨大西洋至美西", seq: "[11,12,19,20]", dist: 9600, cid: maersk.CompanyID},
 		{name: "中国-非洲航线 (Ningbo-Durban)", depPort: "Ningbo Zhoushan Port", destPort: "Durban Port", desc: "中国至南部非洲", seq: "[5,3,6,8,9]", dist: 8500, cid: cma.CompanyID},
 		{name: "亚欧航线 (Shenzhen-Rotterdam)", depPort: "Shenzhen Yantian Port", destPort: "Rotterdam Port", desc: "深圳至欧洲主力航线", seq: "[4,6,17,18,11]", dist: 8200, cid: cma.CompanyID},
 		{name: "亚洲-南美西海岸 (Hong Kong-LA)", depPort: "Hong Kong Port", destPort: "Los Angeles Port", desc: "亚洲至美西", seq: "[3,6,15,19]", dist: 10500, cid: cma.CompanyID},
@@ -293,10 +293,14 @@ func seed(db *gorm.DB) {
 		vessel := vessels[v.vesselIdx]
 		for seqIdx, s := range v.stops {
 			makeTime := func(d, h int) *time.Time { return timePtr(time.Date(v.date.Year(), v.date.Month(), d, h, 0, 0, 0, time.UTC)) }
+			// 实际到港/离港时间设为与计划相同（用于追踪展示）
+			actualArr := makeTime(s.arriveD, s.arriveT)
+			actualDep := makeTime(s.departD, s.departT)
 			vb := model.VoyageBerthing{
 				LineID: &lines[v.lineIdx].LineID, VesselID: &vessel.VesselID, VoyageDate: v.date,
 				SequenceNo: int32(seqIdx + 1), PortID: &ports[s.portIdx].PortID,
 				PlannedArrivalTime: makeTime(s.arriveD, s.arriveT), PlannedDepartureTime: makeTime(s.departD, s.departT),
+				ActualArrivalTime: actualArr, ActualDepartureTime: actualDep,
 				IsAdjustable: 1, CreateTime: now, UpdateTime: now,
 			}
 			mustCreate(db, &vb)
@@ -379,9 +383,22 @@ func seed(db *gorm.DB) {
 	for i, od := range ordersData {
 		depDate, _ := time.Parse("2006-01-02", od.depDate)
 		arrDate, _ := time.Parse("2006-01-02", od.arrDate)
+		// Link order to a voyage cargo note at the same departure port,
+		// so shipping companies can see it through load_note_id → voyage_cargo_note → shipping_line
+		var loadNote model.VoyageCargoNote
+		loadNoteID := (*int64)(nil)
+		portID := ports[od.depP].PortID
+		if err := db.Table("voyage_cargo_note").
+			Select("voyage_cargo_note.note_id").
+			Joins("JOIN voyage_berthing ON voyage_berthing.line_id = voyage_cargo_note.line_id AND voyage_berthing.vessel_id = voyage_cargo_note.vessel_id AND voyage_berthing.voyage_date = voyage_cargo_note.voyage_date AND voyage_berthing.sequence_no = voyage_cargo_note.sequence_no").
+			Where("voyage_berthing.port_id = ?", portID).
+			Limit(1).Scan(&loadNote).Error; err == nil && loadNote.NoteID > 0 {
+			loadNoteID = &loadNote.NoteID
+		}
 		order := model.ShippingOrder{
 			OrderNo: od.no, ShipperCompanyID: &shipperList(db, od.sidx).CompanyID, CityID: &cities[od.cidx].CityID,
 			DeparturePortID: &ports[od.depP].PortID, DestinationPortID: &ports[od.destP].PortID,
+			LoadNoteID: loadNoteID,
 			ExpectedDepartureDate: &depDate, ExpectedArrivalDate: &arrDate,
 			TotalCost: &od.cost, ShipperContact: strPtr(od.contact), ConsigneeContact: strPtr(od.consignee),
 			PaymentStatus: &od.payStatus, OrderStatus: &od.orderStatus,

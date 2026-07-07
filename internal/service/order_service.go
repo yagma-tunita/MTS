@@ -21,7 +21,7 @@ import (
 type OrderService interface {
 	CreateOrder(ctx context.Context, req *CreateOrderRequest) (*model.ShippingOrder, error)
 	CancelOrder(ctx context.Context, orderID int64) error
-	UpdateOrderStatus(ctx context.Context, orderID int64, newStatus int8) error
+	UpdateOrderStatus(ctx context.Context, orderID int64, newStatus int8, actualTime *time.Time, notes string, portID *int64) error
 	GetOrderByID(ctx context.Context, orderID int64) (*model.ShippingOrder, error)
 	ListOrdersByShipper(ctx context.Context, shipperCompanyID int64, req PageRequest, orderNo string, orderStatus *int8) ([]model.ShippingOrder, int64, error)
 	ListOrdersByShippingCompany(ctx context.Context, companyID int64, req PageRequest, orderNo string, orderStatus *int8) ([]model.ShippingOrder, int64, error)
@@ -30,6 +30,7 @@ type OrderService interface {
 	CheckOrderBelongsToShipper(ctx context.Context, orderID, shipperCompanyID int64) (bool, error)
 	GetOrderTracking(ctx context.Context, orderID int64) (*OrderTracking, error)
 	PayOrder(ctx context.Context, orderID int64) error
+	RecordPortVisit(ctx context.Context, orderID int64, req *PortVisitRequest) error
 }
 
 // CreateOrderRequest 创建订单的请求参数。
@@ -47,6 +48,22 @@ type CreateOrderRequest struct {
 	ExpectedDeparture  *string
 	ExpectedArrival    *string
 	ShippingCompanyID  int64 // 仅 shipping 角色设置，用于校验 vessel/line 归属
+}
+
+// PortCargoOp 港口货物操作
+type PortCargoOp struct {
+	CargoName string  `json:"cargo_name"`
+	CargoType string  `json:"cargo_type"`
+	WeightTon float64 `json:"weight_ton"`
+	Operation string  `json:"operation"` // LOAD / UNLOAD
+}
+
+// PortVisitRequest 记录港口访问请求
+type PortVisitRequest struct {
+	PortID          int64         `json:"port_id" validate:"required"`
+	ActualArrival   *string       `json:"actual_arrival,omitempty"`
+	ActualDeparture *string       `json:"actual_departure,omitempty"`
+	CargoOperations []PortCargoOp `json:"cargo_operations,omitempty"`
 }
 
 // CargoItem 货物条目。
@@ -607,14 +624,22 @@ func (s *orderServiceImpl) CancelOrder(ctx context.Context, orderID int64) error
 	return nil
 }
 
-// UpdateOrderStatus 更新订单状态。校验：状态机合法性 + DAO 持久化 + WebSocket 推送
-func (s *orderServiceImpl) UpdateOrderStatus(ctx context.Context, orderID int64, newStatus int8) error {
+// UpdateOrderStatus 更新订单状态。校验：状态机合法性 + DAO 持久化 + 靠泊时间记录 + WebSocket 推送
+func (s *orderServiceImpl) UpdateOrderStatus(ctx context.Context, orderID int64, newStatus int8, actualTime *time.Time, notes string, portID *int64) error {
 	logger := Logger.With("method", "UpdateOrderStatus", "order_id", orderID, "new_status", newStatus)
 	logger.Info("updating order status")
 
 	order, err := s.orderDAO.GetByID(orderID)
 	if err != nil {
 		return pkgerr.NotFound("order not found")
+	}
+	if order.LoadNote == nil || order.LoadNote.NoteID == 0 {
+		if order.LoadNoteID != nil && *order.LoadNoteID > 0 {
+			var ln model.VoyageCargoNote
+			if err := s.db.First(&ln, *order.LoadNoteID).Error; err == nil {
+				order.LoadNote = &ln
+			}
+		}
 	}
 	oldStatus := int8(0)
 	if order.OrderStatus != nil {
@@ -630,8 +655,40 @@ func (s *orderServiceImpl) UpdateOrderStatus(ctx context.Context, orderID int64,
 		return err
 	}
 
-	// 状态更新后，通过 WebSocket 向该订单的货主推送实时通知
-	// 这样货主在不刷新页面的情况下就能看到状态变化
+	// 更新靠泊实际时间（优先使用前端传入的时间 + 指定港口）
+	ts := actualTime
+	if ts == nil {
+		now := time.Now()
+		ts = &now
+	}
+	targetPortID := portID
+	if targetPortID == nil {
+		if newStatus == 2 {
+			targetPortID = order.DeparturePortID
+		} else if newStatus == 3 {
+			targetPortID = order.DestinationPortID
+		}
+	}
+	if targetPortID != nil && order.LoadNote != nil && order.LoadNote.NoteID > 0 {
+		lineID := order.LoadNote.LineID
+		vesselID := order.LoadNote.VesselID
+		voyageDate := order.LoadNote.VoyageDate
+		if lineID != nil && vesselID != nil {
+			if newStatus == 2 {
+				s.db.Model(&model.VoyageBerthing{}).
+					Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
+						*lineID, *vesselID, voyageDate, *targetPortID).
+					Update("actual_departure_time", *ts)
+			}
+			if newStatus == 3 {
+				s.db.Model(&model.VoyageBerthing{}).
+					Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
+						*lineID, *vesselID, voyageDate, *targetPortID).
+					Update("actual_arrival_time", *ts)
+			}
+		}
+	}
+
 	if order.ShipperCompanyID != nil {
 		if err := s.wsSvc.PushOrderStatusUpdate(*order.ShipperCompanyID, "shipper", orderID, newStatus); err != nil {
 			logger.Error("failed to push websocket notification", "error", err)
@@ -780,6 +837,25 @@ func (s *orderServiceImpl) CheckOrderBelongsToShipper(ctx context.Context, order
 	return count > 0, err
 }
 
+type TrackingCargoOp struct {
+	CargoName  string  `json:"cargo_name"`
+	CargoType  string  `json:"cargo_type"`
+	WeightTon  float64 `json:"weight_ton"`
+	Operation  string  `json:"operation"`
+}
+
+type TrackingStop struct {
+	PortID            int64             `json:"port_id"`
+	PortName          string            `json:"port_name"`
+	SequenceNo        int32             `json:"sequence_no"`
+	PlannedArrival    *time.Time        `json:"planned_arrival"`
+	PlannedDeparture  *time.Time        `json:"planned_departure"`
+	ActualArrival     *time.Time        `json:"actual_arrival"`
+	ActualDeparture   *time.Time        `json:"actual_departure"`
+	Status            string            `json:"status"`
+	CargoOperations   []TrackingCargoOp `json:"cargo_operations"`
+}
+
 // OrderTracking 订单追踪信息结构体。包含订单状态 + 装卸货时间 + 起止港靠泊计划/实际时间 + 船舶航线名称
 type OrderTracking struct {
 	OrderID              int64      `json:"order_id"`
@@ -800,6 +876,8 @@ type OrderTracking struct {
 	ArrivalActual        *time.Time `json:"arrival_actual"`
 	VesselName           string     `json:"vessel_name"`
 	LineName             string     `json:"line_name"`
+	Stops                []TrackingStop `json:"stops"`
+	CurrentStopIndex     int           `json:"current_stop_index"`
 }
 
 // PayOrder 虚拟支付——将订单支付状态更新为已支付。
@@ -818,10 +896,94 @@ func (s *orderServiceImpl) PayOrder(ctx context.Context, orderID int64) error {
 	return nil
 }
 
-// GetOrderTracking 查询物流追踪信息。联表查询：先查订单+关联表，再分别查船舶名/航线名/靠泊记录
+// RecordPortVisit 记录运输中的订单在某个港口的到港/离港时间及货物操作。
+func (s *orderServiceImpl) RecordPortVisit(ctx context.Context, orderID int64, req *PortVisitRequest) error {
+	logger := Logger.With("method", "RecordPortVisit", "order_id", orderID, "port_id", req.PortID)
+
+	order, err := s.orderDAO.GetByID(orderID)
+	if err != nil {
+		return pkgerr.NotFound("order not found")
+	}
+	if order.OrderStatus == nil || *order.OrderStatus != 2 {
+		return pkgerr.BadRequest("only orders in transit can record port visits")
+	}
+	if order.LoadNote == nil || order.LoadNote.NoteID == 0 {
+		if order.LoadNoteID != nil && *order.LoadNoteID > 0 {
+			var ln model.VoyageCargoNote
+			if err := s.db.First(&ln, *order.LoadNoteID).Error; err == nil {
+				order.LoadNote = &ln
+			}
+		}
+	}
+	if order.LoadNote == nil {
+		return pkgerr.BadRequest("order has no load note")
+	}
+
+	lineID := order.LoadNote.LineID
+	vesselID := order.LoadNote.VesselID
+	voyageDate := order.LoadNote.VoyageDate
+	if lineID == nil || vesselID == nil {
+		return pkgerr.BadRequest("order load note missing line/vessel info")
+	}
+
+	// 更新靠泊实际时间
+	updates := map[string]interface{}{}
+	if req.ActualArrival != nil && *req.ActualArrival != "" {
+		if t, err := time.Parse("2006-01-02 15:04:05", *req.ActualArrival); err == nil {
+			updates["actual_arrival_time"] = t
+		}
+	}
+	if req.ActualDeparture != nil && *req.ActualDeparture != "" {
+		if t, err := time.Parse("2006-01-02 15:04:05", *req.ActualDeparture); err == nil {
+			updates["actual_departure_time"] = t
+		}
+	}
+	if len(updates) > 0 {
+		s.db.Model(&model.VoyageBerthing{}).
+			Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
+				*lineID, *vesselID, voyageDate, req.PortID).
+			Updates(updates)
+	}
+
+	// 查找该港口的 berthing sequence_no
+	var berthing model.VoyageBerthing
+	if err := s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
+		lineID, vesselID, voyageDate, req.PortID).First(&berthing).Error; err != nil {
+		logger.Warn("berthing not found for port", "port_id", req.PortID)
+	} else {
+		seq := berthing.SequenceNo
+		for _, op := range req.CargoOperations {
+			cn := op.CargoName
+			ct := op.CargoType
+			w := op.WeightTon
+			ot := op.Operation
+			var existing model.VoyageCargoNote
+			res := s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND sequence_no = ? AND cargo_name = ? AND operation_type = ?",
+				lineID, vesselID, voyageDate, seq, cn, ot).First(&existing)
+			if res.Error == nil && existing.NoteID > 0 {
+				s.db.Model(&existing).Updates(map[string]interface{}{
+					"cargo_name": cn, "cargo_type": ct, "weight_ton": w, "operation_type": ot,
+				})
+			} else {
+				z := 0.0
+				note := model.VoyageCargoNote{
+					LineID: lineID, VesselID: vesselID, VoyageDate: voyageDate,
+					SequenceNo: seq,
+					CargoName: &cn, CargoType: &ct, OperationType: &ot,
+					WeightTon: &w, Quantity: &z, VolumeCubicMeter: &z, UnitPrice: &z, Subtotal: &z,
+					CreateTime: time.Now(), UpdateTime: time.Now(),
+				}
+				s.db.Create(&note)
+			}
+		}
+	}
+
+	logger.Info("port visit recorded")
+	return nil
+}
+
+// GetOrderTracking 查询物流追踪信息。包含航次完整时间线（所有挂靠港）、当前船位、起止港计划/实际时间。
 func (s *orderServiceImpl) GetOrderTracking(ctx context.Context, orderID int64) (*OrderTracking, error) {
-	logger := Logger.With("method", "GetOrderTracking", "order_id", orderID)
-	// 1. 查订单主表 + 预加载城市/装卸货单/起止港（GORM 关联查询）
 	var order model.ShippingOrder
 	err := s.db.Scopes(dao.NotDeleted).
 		Preload("City").
@@ -833,8 +995,6 @@ func (s *orderServiceImpl) GetOrderTracking(ctx context.Context, orderID int64) 
 	if err != nil {
 		return nil, pkgerr.NotFound("order not found")
 	}
-
-	// 2. 从 LoadNote 中获取 lineID/vesselID/voyageDate（追踪信息的核心三元组）
 	if order.LoadNote == nil {
 		return nil, pkgerr.NotFound("load note not found")
 	}
@@ -842,32 +1002,99 @@ func (s *orderServiceImpl) GetOrderTracking(ctx context.Context, orderID int64) 
 	vesselID := *order.LoadNote.VesselID
 	voyageDate := order.LoadNote.VoyageDate
 
-	// 3. 分别查船舶名称和航线名称（单独查询而非 Preload，因为 Order 模型没有直接关联）
 	var vessel model.Vessel
 	vesselName := ""
 	if err := s.db.Scopes(dao.NotDeleted).First(&vessel, vesselID).Error; err == nil {
 		vesselName = vessel.VesselName
 	}
-
 	var line model.ShippingLine
 	lineName := ""
 	if err := s.db.Scopes(dao.NotDeleted).First(&line, lineID).Error; err == nil {
 		lineName = line.LineName
 	}
 
-	// 4. 查询 voyage_berthing 表获取起止港的靠泊计划时间和实际时间
-	// 用于前端展示：计划几点到港、实际出发时间等
-	// 找不到靠泊记录不报错，前端展示空值
+	// 查询航次所有挂靠港（按顺序），关联港口名称
+	var berthings []model.VoyageBerthing
+	s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ?", lineID, vesselID, voyageDate).
+		Order("sequence_no ASC").
+		Preload("Port").
+		Find(&berthings)
+
 	var departureBerthing, arrivalBerthing model.VoyageBerthing
-	if err := s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
-		lineID, vesselID, voyageDate, *order.DeparturePortID).
-		First(&departureBerthing).Error; err != nil {
-		logger.Warn("departure berthing not found", "error", err)
+	stops := make([]TrackingStop, 0)
+	now := time.Now()
+	currentStopIndex := -1
+
+	for _, b := range berthings {
+		status := "pending"
+		if b.ActualDepartureTime != nil && !b.ActualDepartureTime.IsZero() {
+			status = "completed"
+		} else if b.ActualArrivalTime != nil && !b.ActualArrivalTime.IsZero() {
+			status = "berthed"
+		} else if b.PlannedArrivalTime != nil && b.PlannedArrivalTime.Before(now) {
+			status = "overdue"
+		} else {
+			status = "pending"
+		}
+		if b.ActualArrivalTime == nil || b.ActualArrivalTime.IsZero() {
+			if currentStopIndex < 0 {
+				currentStopIndex = len(stops)
+			}
+		}
+
+		portName := ""
+		if b.Port != nil {
+			portName = b.Port.PortName
+		}
+		// 查询该停靠点的货物操作（装/卸）
+		var cargoNotes []model.VoyageCargoNote
+		s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND sequence_no = ?",
+			lineID, vesselID, voyageDate, b.SequenceNo).Find(&cargoNotes)
+		cargoOps := make([]TrackingCargoOp, 0)
+		for _, cn := range cargoNotes {
+			if cn.CargoName == nil || *cn.CargoName == "待定" {
+				continue
+			}
+			op := "LOAD"
+			if cn.OperationType != nil {
+				op = *cn.OperationType
+			}
+			w := 0.0
+			if cn.WeightTon != nil {
+				w = *cn.WeightTon
+			}
+			ct := ""
+			if cn.CargoType != nil {
+				ct = *cn.CargoType
+			}
+			cargoOps = append(cargoOps, TrackingCargoOp{
+				CargoName: safeDerefStr(cn.CargoName),
+				CargoType: ct,
+				WeightTon: w,
+				Operation: op,
+			})
+		}
+		stops = append(stops, TrackingStop{
+			PortID:           safeDeref(b.PortID),
+			PortName:         portName,
+			SequenceNo:       b.SequenceNo,
+			PlannedArrival:   b.PlannedArrivalTime,
+			PlannedDeparture: b.PlannedDepartureTime,
+			ActualArrival:    b.ActualArrivalTime,
+			ActualDeparture:  b.ActualDepartureTime,
+			Status:           status,
+			CargoOperations:  cargoOps,
+		})
+
+		if b.PortID != nil && order.DeparturePortID != nil && *b.PortID == *order.DeparturePortID {
+			departureBerthing = b
+		}
+		if b.PortID != nil && order.DestinationPortID != nil && *b.PortID == *order.DestinationPortID {
+			arrivalBerthing = b
+		}
 	}
-	if err := s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
-		lineID, vesselID, voyageDate, *order.DestinationPortID).
-		First(&arrivalBerthing).Error; err != nil {
-		logger.Warn("arrival berthing not found", "error", err)
+	if currentStopIndex < 0 {
+		currentStopIndex = len(stops)
 	}
 
 	if order.OrderStatus == nil {
@@ -896,6 +1123,8 @@ func (s *orderServiceImpl) GetOrderTracking(ctx context.Context, orderID int64) 
 		ArrivalActual:       arrivalBerthing.ActualArrivalTime,
 		VesselName:          vesselName,
 		LineName:            lineName,
+		Stops:               stops,
+		CurrentStopIndex:    currentStopIndex,
 	}
 	return tracking, nil
 }
@@ -918,5 +1147,12 @@ func indexOf(ids []int64, target int64) int {
 		if id == target { return i }
 	}
 	return -1
+}
+
+func safeDerefStr(p *string) string { if p == nil { return "" }; return *p }
+
+func safeDeref[T int64 | float64 | int32](p *T) T {
+	if p == nil { var z T; return z }
+	return *p
 }
 

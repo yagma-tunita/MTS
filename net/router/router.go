@@ -124,6 +124,8 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 
 			// 订单支付
 			protected.POST("/orders/:id/pay", h.Order.PayOrder)
+			// 港口访问记录（运输中状态时更新港口时间+装卸货）
+			protected.POST("/orders/:id/port-visit", h.Order.RecordPortVisit)
 
 			// Excel 导入导出
 			protected.GET("/export/ports", h.ImportExport.ExportPorts)
@@ -157,6 +159,8 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 			{
 				adminGroup.GET("/list", h.Admin.List)
 				adminGroup.GET("/cargo/list", h.Cargo.ListAllCargos)
+				adminGroup.POST("/cargo/create", h.Cargo.CreateCargo)
+				adminGroup.DELETE("/cargo/:id", h.Cargo.DeleteCargo)
 				adminGroup.POST("/register", h.Admin.Create)
 				adminGroup.POST("/password/:id", h.Admin.UpdatePassword)
 				adminGroup.POST("/notifications", h.Notification.SendNotification)

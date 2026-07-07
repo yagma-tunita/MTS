@@ -13,7 +13,7 @@ type ShippingCompanyDAO interface {
 	Update(company *model.ShippingCompany) error
 	UpdateMap(id int64, updates map[string]interface{}) error
 	Delete(id int64) error
-	List(page, pageSize int) ([]model.ShippingCompany, int64, error)
+	List(page, pageSize int, keyword string) ([]model.ShippingCompany, int64, error)
 }
 
 type shippingCompanyDAOImpl struct {
@@ -56,10 +56,13 @@ func (d *shippingCompanyDAOImpl) Delete(id int64) error {
 		Update("delete_time", gorm.Expr("NOW()")).Error
 }
 
-func (d *shippingCompanyDAOImpl) List(page, pageSize int) ([]model.ShippingCompany, int64, error) {
+func (d *shippingCompanyDAOImpl) List(page, pageSize int, keyword string) ([]model.ShippingCompany, int64, error) {
 	var companies []model.ShippingCompany
 	var total int64
 	query := d.db.Model(&model.ShippingCompany{}).Scopes(NotDeleted)
+	if keyword != "" {
+		query = query.Where("(company_name LIKE ? OR contact_person LIKE ?)", "%"+keyword+"%", "%"+keyword+"%")
+	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

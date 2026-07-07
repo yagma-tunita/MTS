@@ -62,7 +62,8 @@ func (h *PortHandler) ListPorts(c *gin.Context) {
 		}
 	}
 
-	ports, total, err := h.svc.ListPorts(c.Request.Context(), page, pageSize)
+	keyword := c.Query("keyword")
+	ports, total, err := h.svc.ListPorts(c.Request.Context(), page, pageSize, keyword)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list ports")
 		return
@@ -104,11 +105,11 @@ func (h *PortHandler) UpdatePort(c *gin.Context) {
 	}
 	if v, ok := req["port_name"]; ok { existing.PortName = v.(string) }
 	if v, ok := req["port_code"]; ok { existing.PortCode = strPtr(v.(string)) }
-	if v, ok := req["city_id"]; ok { idVal := int64(v.(float64)); existing.CityID = &idVal }
-	if v, ok := req["latitude"]; ok { f := v.(float64); existing.Latitude = &f }
-	if v, ok := req["longitude"]; ok { f := v.(float64); existing.Longitude = &f }
-	if v, ok := req["port_type"]; ok { existing.PortType = strPtr(v.(string)) }
-	if v, ok := req["max_draft_meter"]; ok { f := v.(float64); existing.MaxDraftMeter = &f }
+	if v, ok := req["city_id"]; ok && v != nil { idVal := int64(v.(float64)); existing.CityID = &idVal }
+	if v, ok := req["latitude"]; ok && v != nil { f := v.(float64); existing.Latitude = &f }
+	if v, ok := req["longitude"]; ok && v != nil { f := v.(float64); existing.Longitude = &f }
+	if v, ok := req["port_type"]; ok && v != nil { existing.PortType = strPtr(v.(string)) }
+	if v, ok := req["max_draft_meter"]; ok && v != nil { f := v.(float64); existing.MaxDraftMeter = &f }
 	if err := h.svc.UpdatePort(c.Request.Context(), existing); err != nil {
 		response.InternalServerError(c.Writer, "failed to update port")
 		return

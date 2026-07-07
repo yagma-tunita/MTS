@@ -11,7 +11,7 @@ import (
 // VesselService 船舶服务接口，支持查询单个、列表、按公司查询、增删改。
 type VesselService interface {
 	GetVesselByID(ctx context.Context, id int64) (*model.Vessel, error)
-	ListVessels(ctx context.Context, page, pageSize int) ([]model.Vessel, int64, error)
+	ListVessels(ctx context.Context, page, pageSize int, keyword string) ([]model.Vessel, int64, error)
 	ListVesselsByCompany(ctx context.Context, companyID int64, page, pageSize int) ([]model.Vessel, int64, error)
 	CreateVessel(ctx context.Context, vessel *model.Vessel) error
 	UpdateVessel(ctx context.Context, vessel *model.Vessel) error
@@ -42,11 +42,11 @@ func (s *vesselServiceImpl) GetVesselByID(ctx context.Context, id int64) (*model
 }
 
 // ListVessels 分页查询船舶列表。
-func (s *vesselServiceImpl) ListVessels(ctx context.Context, page, pageSize int) ([]model.Vessel, int64, error) {
+func (s *vesselServiceImpl) ListVessels(ctx context.Context, page, pageSize int, keyword string) ([]model.Vessel, int64, error) {
 	logger := Logger.With("method", "ListVessels", "page", page, "page_size", pageSize)
 	logger.Debug("listing vessels")
 
-	vessels, total, err := s.dao.List(page, pageSize)
+	vessels, total, err := s.dao.List(page, pageSize, keyword)
 	if err != nil {
 		logger.Error("failed to list vessels", "error", err)
 		return nil, 0, err

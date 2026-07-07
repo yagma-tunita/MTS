@@ -19,7 +19,7 @@ type ShipperCompanyService interface {
 	Login(ctx context.Context, username, plainPassword string) (*model.ShipperCompany, error)
 	UpdatePassword(ctx context.Context, companyID int64, oldPassword, newPassword string) error
 	Delete(ctx context.Context, id int64) error
-	List(ctx context.Context, page, pageSize int) ([]model.ShipperCompany, int64, error)
+	List(ctx context.Context, page, pageSize int, keyword string) ([]model.ShipperCompany, int64, error)
 	GetByID(ctx context.Context, id int64) (*model.ShipperCompany, error)
 	UpdateByAdmin(ctx context.Context, id int64, updates map[string]interface{}) error
 }
@@ -109,8 +109,8 @@ func (s *shipperCompanyServiceImpl) UpdatePassword(ctx context.Context, companyI
 }
 
 // List 分页查询货主公司列表（admin 用）。
-func (s *shipperCompanyServiceImpl) List(ctx context.Context, page, pageSize int) ([]model.ShipperCompany, int64, error) {
-	return s.dao.List(page, pageSize)
+func (s *shipperCompanyServiceImpl) List(ctx context.Context, page, pageSize int, keyword string) ([]model.ShipperCompany, int64, error) {
+	return s.dao.List(page, pageSize, keyword)
 }
 
 // GetByID 查询货主公司。
@@ -149,7 +149,7 @@ type ShippingCompanyService interface {
 	Login(ctx context.Context, username, plainPassword string) (*model.ShippingCompany, error)
 	UpdatePassword(ctx context.Context, companyID int64, oldPassword, newPassword string) error
 	Delete(ctx context.Context, id int64) error
-	List(ctx context.Context, page, pageSize int) ([]model.ShippingCompany, int64, error)
+	List(ctx context.Context, page, pageSize int, keyword string) ([]model.ShippingCompany, int64, error)
 	UpdateByAdmin(ctx context.Context, id int64, updates map[string]interface{}) error
 }
 
@@ -233,8 +233,8 @@ func (s *shippingCompanyServiceImpl) UpdatePassword(ctx context.Context, company
 }
 
 // List 分页查询船公司列表（admin 用）。
-func (s *shippingCompanyServiceImpl) List(ctx context.Context, page, pageSize int) ([]model.ShippingCompany, int64, error) {
-	return s.dao.List(page, pageSize)
+func (s *shippingCompanyServiceImpl) List(ctx context.Context, page, pageSize int, keyword string) ([]model.ShippingCompany, int64, error) {
+	return s.dao.List(page, pageSize, keyword)
 }
 
 // UpdateByAdmin 管理员更新船公司信息。

@@ -21,8 +21,9 @@ func NewAdminHandler(svc service.AdminService) *AdminHandler { // 创建管理�
 }
 
 type adminListRequest struct { // 管理员列表查询参数
-	Page     int `form:"page" validate:"omitempty,min=1"`
-	PageSize int `form:"page_size" validate:"omitempty,min=1,max=100"`
+	Page     int    `form:"page" validate:"omitempty,min=1"`
+	PageSize int    `form:"page_size" validate:"omitempty,min=1,max=100"`
+	Keyword  string `form:"keyword"`
 }
 
 func (h *AdminHandler) List(c *gin.Context) { // 管理员分页查询管理员列表
@@ -37,7 +38,7 @@ func (h *AdminHandler) List(c *gin.Context) { // 管理员分页查询管理员�
 	if req.PageSize < 1 || req.PageSize > 100 {
 		req.PageSize = 20
 	}
-	admins, total, err := h.svc.List(c.Request.Context(), req.Page, req.PageSize)
+	admins, total, err := h.svc.List(c.Request.Context(), req.Page, req.PageSize, req.Keyword)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list admins")
 		return

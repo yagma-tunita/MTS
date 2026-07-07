@@ -13,7 +13,7 @@ type VesselDAO interface {
 	Update(vessel *model.Vessel) error
 	Delete(id int64) error
 	ListByShippingCompany(companyID int64, page, pageSize int) ([]model.Vessel, int64, error)
-	List(page, pageSize int) ([]model.Vessel, int64, error)
+	List(page, pageSize int, keyword string) ([]model.Vessel, int64, error)
 }
 
 type vesselDAOImpl struct {
@@ -43,7 +43,21 @@ func (d *vesselDAOImpl) GetByIMONumber(imo string) (*model.Vessel, error) {
 }
 
 func (d *vesselDAOImpl) Update(vessel *model.Vessel) error {
-	return d.db.Save(vessel).Error
+	updates := map[string]interface{}{
+		"vessel_name": vessel.VesselName,
+		"call_sign":   vessel.CallSign,
+		"imo_number":  vessel.IMONumber,
+		"vessel_type": vessel.VesselType,
+	}
+	if vessel.MaxDeadweightTon != nil { updates["max_deadweight_ton"] = *vessel.MaxDeadweightTon }
+	if vessel.GrossTonnage != nil { updates["gross_tonnage"] = *vessel.GrossTonnage }
+	if vessel.NetTonnage != nil { updates["net_tonnage"] = *vessel.NetTonnage }
+	if vessel.DraftMeter != nil { updates["draft_meter"] = *vessel.DraftMeter }
+	if vessel.SpeedKnot != nil { updates["speed_knot"] = *vessel.SpeedKnot }
+	if vessel.ContainerTEU != nil { updates["container_teu"] = *vessel.ContainerTEU }
+	updates["is_available"] = vessel.IsAvailable
+	if vessel.ShippingCompanyID != nil { updates["shipping_company_id"] = *vessel.ShippingCompanyID }
+	return d.db.Model(&model.Vessel{}).Where("vessel_id = ?", vessel.VesselID).Omit("ShippingCompany").Updates(updates).Error
 }
 
 func (d *vesselDAOImpl) Delete(id int64) error {
@@ -66,10 +80,13 @@ func (d *vesselDAOImpl) ListByShippingCompany(companyID int64, page, pageSize in
 	return vessels, total, err
 }
 
-func (d *vesselDAOImpl) List(page, pageSize int) ([]model.Vessel, int64, error) {
+func (d *vesselDAOImpl) List(page, pageSize int, keyword string) ([]model.Vessel, int64, error) {
 	var vessels []model.Vessel
 	var total int64
 	query := d.db.Model(&model.Vessel{}).Scopes(NotDeleted)
+	if keyword != "" {
+		query = query.Where("(vessel_name LIKE ? OR imo_number LIKE ?)", "%"+keyword+"%", "%"+keyword+"%")
+	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

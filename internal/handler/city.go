@@ -58,10 +58,10 @@ func (h *CityHandler) UpdateCity(c *gin.Context) {
 		return
 	}
 	city := &model.City{CityID: id}
-	if v, ok := req["city_name"]; ok { city.CityName = v.(string) }
-	if v, ok := req["country"]; ok { s := v.(string); city.Country = &s }
-	if v, ok := req["country_code"]; ok { s := v.(string); city.CountryCode = &s }
-	if v, ok := req["timezone"]; ok { s := v.(string); city.Timezone = &s }
+	if v, ok := req["city_name"]; ok && v != nil { city.CityName = v.(string) }
+	if v, ok := req["country"]; ok && v != nil { s := v.(string); city.Country = &s }
+	if v, ok := req["country_code"]; ok && v != nil { s := v.(string); city.CountryCode = &s }
+	if v, ok := req["timezone"]; ok && v != nil { s := v.(string); city.Timezone = &s }
 	if err := h.svc.UpdateCity(c.Request.Context(), city); err != nil {
 		response.InternalServerError(c.Writer, "failed to update city")
 		return

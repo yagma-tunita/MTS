@@ -35,7 +35,20 @@ func (d *voyageBerthingDAOImpl) GetByID(id int64) (*model.VoyageBerthing, error)
 }
 
 func (d *voyageBerthingDAOImpl) Update(berthing *model.VoyageBerthing) error {
-	return d.db.Save(berthing).Error
+	return d.db.Model(&model.VoyageBerthing{}).Where("berthing_id = ?", berthing.BerthingID).Omit("Line", "Vessel", "Port", "Berth").Updates(map[string]interface{}{
+		"line_id":                berthing.LineID,
+		"vessel_id":              berthing.VesselID,
+		"voyage_date":            berthing.VoyageDate,
+		"sequence_no":            berthing.SequenceNo,
+		"port_id":                berthing.PortID,
+		"berth_id":               berthing.BerthID,
+		"planned_arrival_time":   berthing.PlannedArrivalTime,
+		"planned_departure_time": berthing.PlannedDepartureTime,
+		"actual_arrival_time":    berthing.ActualArrivalTime,
+		"actual_departure_time":  berthing.ActualDepartureTime,
+		"draft_at_berthing_meter": berthing.DraftAtBerthingMeter,
+		"is_adjustable":          berthing.IsAdjustable,
+	}).Error
 }
 
 func (d *voyageBerthingDAOImpl) Delete(id int64) error {
