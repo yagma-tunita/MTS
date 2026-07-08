@@ -21,7 +21,7 @@ import (
 type OrderService interface {
 	CreateOrder(ctx context.Context, req *CreateOrderRequest) (*model.ShippingOrder, error)
 	CancelOrder(ctx context.Context, orderID int64) error
-	UpdateOrderStatus(ctx context.Context, orderID int64, newStatus int8, actualTime *time.Time, notes string, portID *int64) error
+	UpdateOrderStatus(ctx context.Context, orderID int64, newStatus int8, actualTime *time.Time, notes string, portID *int64, cargoOps []PortCargoOp) error
 	GetOrderByID(ctx context.Context, orderID int64) (*model.ShippingOrder, error)
 	ListOrdersByShipper(ctx context.Context, shipperCompanyID int64, req PageRequest, orderNo string, orderStatus *int8) ([]model.ShippingOrder, int64, error)
 	ListOrdersByShippingCompany(ctx context.Context, companyID int64, req PageRequest, orderNo string, orderStatus *int8) ([]model.ShippingOrder, int64, error)
@@ -624,8 +624,8 @@ func (s *orderServiceImpl) CancelOrder(ctx context.Context, orderID int64) error
 	return nil
 }
 
-// UpdateOrderStatus 更新订单状态。校验：状态机合法性 + DAO 持久化 + 靠泊时间记录 + WebSocket 推送
-func (s *orderServiceImpl) UpdateOrderStatus(ctx context.Context, orderID int64, newStatus int8, actualTime *time.Time, notes string, portID *int64) error {
+// UpdateOrderStatus 更新订单状态。校验：状态机合法性 + DAO 持久化 + 靠泊时间记录 + 货物操作 + WebSocket 推送
+func (s *orderServiceImpl) UpdateOrderStatus(ctx context.Context, orderID int64, newStatus int8, actualTime *time.Time, notes string, portID *int64, cargoOps []PortCargoOp) error {
 	logger := Logger.With("method", "UpdateOrderStatus", "order_id", orderID, "new_status", newStatus)
 	logger.Info("updating order status")
 
@@ -685,6 +685,40 @@ func (s *orderServiceImpl) UpdateOrderStatus(ctx context.Context, orderID int64,
 					Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
 						*lineID, *vesselID, voyageDate, *targetPortID).
 					Update("actual_arrival_time", *ts)
+			}
+		}
+	}
+
+	// 记录货物操作
+	if len(cargoOps) > 0 && targetPortID != nil && order.LoadNote != nil && order.LoadNote.NoteID > 0 {
+		var berthing model.VoyageBerthing
+		if err := s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND port_id = ?",
+			order.LoadNote.LineID, order.LoadNote.VesselID, order.LoadNote.VoyageDate, *targetPortID).
+			First(&berthing).Error; err == nil {
+			seq := berthing.SequenceNo
+			for _, op := range cargoOps {
+				cn := op.CargoName
+				ct := op.CargoType
+				w := op.WeightTon
+				ot := op.Operation
+				var existing model.VoyageCargoNote
+				res := s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ? AND sequence_no = ? AND cargo_name = ? AND operation_type = ?",
+					order.LoadNote.LineID, order.LoadNote.VesselID, order.LoadNote.VoyageDate, seq, cn, ot).First(&existing)
+				if res.Error == nil && existing.NoteID > 0 {
+					s.db.Model(&existing).Updates(map[string]interface{}{
+						"cargo_name": cn, "cargo_type": ct, "weight_ton": w, "operation_type": ot,
+					})
+				} else {
+					z := 0.0
+					note := model.VoyageCargoNote{
+						LineID: order.LoadNote.LineID, VesselID: order.LoadNote.VesselID,
+						VoyageDate: order.LoadNote.VoyageDate, SequenceNo: seq,
+						CargoName: &cn, CargoType: &ct, OperationType: &ot,
+						WeightTon: &w, Quantity: &z, VolumeCubicMeter: &z, UnitPrice: &z, Subtotal: &z,
+						CreateTime: time.Now(), UpdateTime: time.Now(),
+					}
+					s.db.Create(&note)
+				}
 			}
 		}
 	}
@@ -856,7 +890,16 @@ type TrackingStop struct {
 	CargoOperations   []TrackingCargoOp `json:"cargo_operations"`
 }
 
-// OrderTracking 订单追踪信息结构体。包含订单状态 + 装卸货时间 + 起止港靠泊计划/实际时间 + 船舶航线名称
+type CargoSummaryItem struct {
+	CargoName  string  `json:"cargo_name"`
+	CargoType  string  `json:"cargo_type"`
+	WeightTon  float64 `json:"weight_ton"`
+	Status     string  `json:"status"`     // loaded / partial / pending / discharged
+	LoadedTon  float64 `json:"loaded_ton"`
+	Discharged float64 `json:"discharged"`
+}
+
+// OrderTracking 订单追踪信息结构体
 type OrderTracking struct {
 	OrderID              int64      `json:"order_id"`
 	OrderNo              string     `json:"order_no"`
@@ -875,7 +918,13 @@ type OrderTracking struct {
 	ArrivalPlanned       *time.Time `json:"arrival_planned"`
 	ArrivalActual        *time.Time `json:"arrival_actual"`
 	VesselName           string     `json:"vessel_name"`
+	VesselType           string     `json:"vessel_type"`
+	VesselCapacity       float64    `json:"vessel_capacity"`
+	VesselTEU            int32      `json:"vessel_teu"`
+	VesselSpeed          float64    `json:"vessel_speed"`
+	VesselCurrentLoad    float64    `json:"vessel_current_load"`
 	LineName             string     `json:"line_name"`
+	CargoSummary         []CargoSummaryItem `json:"cargo_summary"`
 	Stops                []TrackingStop `json:"stops"`
 	CurrentStopIndex     int           `json:"current_stop_index"`
 }
@@ -1004,13 +1053,64 @@ func (s *orderServiceImpl) GetOrderTracking(ctx context.Context, orderID int64) 
 
 	var vessel model.Vessel
 	vesselName := ""
+	vesselType := ""
+	var vesselCap float64
+	var vesselTEU int32
+	var vesselSpeed float64
 	if err := s.db.Scopes(dao.NotDeleted).First(&vessel, vesselID).Error; err == nil {
 		vesselName = vessel.VesselName
+		if vessel.VesselType != nil { vesselType = *vessel.VesselType }
+		if vessel.MaxDeadweightTon != nil { vesselCap = *vessel.MaxDeadweightTon }
+		if vessel.ContainerTEU != nil { vesselTEU = *vessel.ContainerTEU }
+		if vessel.SpeedKnot != nil { vesselSpeed = *vessel.SpeedKnot }
 	}
 	var line model.ShippingLine
 	lineName := ""
 	if err := s.db.Scopes(dao.NotDeleted).First(&line, lineID).Error; err == nil {
 		lineName = line.LineName
+	}
+
+	// 计算货物装载状态
+	cargoSummary := make([]CargoSummaryItem, 0)
+	var orderCargos []model.OrderCargo
+	if err := s.db.Where("order_id = ?", orderID).Scopes(dao.NotDeleted).Find(&orderCargos).Error; err == nil {
+		// 收集该航次所有 cargo note 的 LOAD/UNLOAD 重量
+		var allNotes []model.VoyageCargoNote
+		s.db.Where("line_id = ? AND vessel_id = ? AND voyage_date = ?", lineID, vesselID, voyageDate).Find(&allNotes)
+		loadMap := make(map[string]float64)
+		unloadMap := make(map[string]float64)
+		for _, n := range allNotes {
+			if n.CargoName == nil || *n.CargoName == "待定" { continue }
+			w := 0.0
+			if n.WeightTon != nil { w = *n.WeightTon }
+			if n.OperationType != nil && *n.OperationType == "LOAD" {
+				loadMap[*n.CargoName] += w
+			} else if n.OperationType != nil && *n.OperationType == "UNLOAD" {
+				unloadMap[*n.CargoName] += w
+			}
+		}
+		for _, c := range orderCargos {
+			if c.CargoName == nil { continue }
+			cn := *c.CargoName
+			planW := 0.0
+			if c.WeightTon != nil { planW = *c.WeightTon }
+			loaded := loadMap[cn]
+			discharged := unloadMap[cn]
+			ct := ""
+			if c.CargoType != nil { ct = *c.CargoType }
+			status := "pending"
+			if discharged >= planW {
+				status = "discharged"
+			} else if loaded >= planW {
+				status = "loaded"
+			} else if loaded > 0 {
+				status = "partial"
+			}
+			cargoSummary = append(cargoSummary, CargoSummaryItem{
+				CargoName: cn, CargoType: ct, WeightTon: planW,
+				Status: status, LoadedTon: loaded, Discharged: discharged,
+			})
+		}
 	}
 
 	// 查询航次所有挂靠港（按顺序），关联港口名称
@@ -1104,6 +1204,12 @@ func (s *orderServiceImpl) GetOrderTracking(ctx context.Context, orderID int64) 
 		0: "Draft", 1: "Confirmed", 2: "In Transit", 3: "Completed", 4: "Cancelled",
 	}[*order.OrderStatus]
 
+	// 计算船舶当前载货量（总装货 - 总卸货）
+	var currentLoad float64
+	for _, cs := range cargoSummary {
+		currentLoad += cs.LoadedTon - cs.Discharged
+	}
+
 	tracking := &OrderTracking{
 		OrderID:             order.OrderID,
 		OrderNo:             order.OrderNo,
@@ -1122,7 +1228,13 @@ func (s *orderServiceImpl) GetOrderTracking(ctx context.Context, orderID int64) 
 		ArrivalPlanned:      arrivalBerthing.PlannedArrivalTime,
 		ArrivalActual:       arrivalBerthing.ActualArrivalTime,
 		VesselName:          vesselName,
+		VesselType:          vesselType,
+		VesselCapacity:      vesselCap,
+		VesselTEU:           vesselTEU,
+		VesselSpeed:         vesselSpeed,
+		VesselCurrentLoad:   currentLoad,
 		LineName:            lineName,
+		CargoSummary:        cargoSummary,
 		Stops:               stops,
 		CurrentStopIndex:    currentStopIndex,
 	}

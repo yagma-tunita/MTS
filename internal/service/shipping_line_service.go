@@ -12,8 +12,8 @@ import (
 // ShippingLineService 航线服务接口，支持查询单个、列表、获取港口序列、增删改。
 type ShippingLineService interface {
 	GetLineByID(ctx context.Context, id int64) (*model.ShippingLine, error)
-	ListLines(ctx context.Context, page, pageSize int, keyword string) ([]model.ShippingLine, int64, error)
-	ListLinesByCompany(ctx context.Context, companyID int64, page, pageSize int) ([]model.ShippingLine, int64, error)
+	ListLines(ctx context.Context, page, pageSize int, keyword string, statusFilter *int8) ([]model.ShippingLine, int64, error)
+	ListLinesByCompany(ctx context.Context, companyID int64, page, pageSize int, statusFilter *int8) ([]model.ShippingLine, int64, error)
 	GetPortSequence(ctx context.Context, lineID int64) ([]int64, error)
 	CreateLine(ctx context.Context, line *model.ShippingLine) error
 	UpdateLine(ctx context.Context, line *model.ShippingLine) error
@@ -48,11 +48,11 @@ func (s *shippingLineServiceImpl) GetLineByID(ctx context.Context, id int64) (*m
 }
 
 // ListLines 分页查询航线列表。
-func (s *shippingLineServiceImpl) ListLines(ctx context.Context, page, pageSize int, keyword string) ([]model.ShippingLine, int64, error) {
+func (s *shippingLineServiceImpl) ListLines(ctx context.Context, page, pageSize int, keyword string, statusFilter *int8) ([]model.ShippingLine, int64, error) {
 	logger := Logger.With("method", "ListLines", "page", page, "page_size", pageSize)
 	logger.Debug("listing shipping lines")
 
-	lines, total, err := s.dao.List(page, pageSize, keyword)
+	lines, total, err := s.dao.List(page, pageSize, keyword, statusFilter)
 	if err != nil {
 		logger.Error("failed to list lines", "error", err)
 		return nil, 0, err
@@ -62,11 +62,11 @@ func (s *shippingLineServiceImpl) ListLines(ctx context.Context, page, pageSize 
 }
 
 // ListLinesByCompany 根据船公司 ID 分页查询该公司航线。
-func (s *shippingLineServiceImpl) ListLinesByCompany(ctx context.Context, companyID int64, page, pageSize int) ([]model.ShippingLine, int64, error) {
+func (s *shippingLineServiceImpl) ListLinesByCompany(ctx context.Context, companyID int64, page, pageSize int, statusFilter *int8) ([]model.ShippingLine, int64, error) {
 	logger := Logger.With("method", "ListLinesByCompany", "company_id", companyID, "page", page, "page_size", pageSize)
 	logger.Debug("listing shipping lines by company")
 
-	lines, total, err := s.dao.ListByShippingCompany(companyID, page, pageSize)
+	lines, total, err := s.dao.ListByShippingCompany(companyID, page, pageSize, statusFilter)
 	if err != nil {
 		logger.Error("failed to list lines by company", "error", err)
 		return nil, 0, err

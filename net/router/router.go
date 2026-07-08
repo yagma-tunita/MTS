@@ -121,6 +121,7 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 			protected.GET("/shipping-lines", h.ShippingLine.ListLines)
 			protected.GET("/shipping-lines/:id", h.ShippingLine.GetLine)
 			protected.GET("/shipping-lines/:id/port-sequence", h.ShippingLine.GetPortSequence)
+			protected.DELETE("/shipping-lines/:id", h.ShippingLine.DeleteLine)
 
 			// 订单支付
 			protected.POST("/orders/:id/pay", h.Order.PayOrder)
@@ -150,6 +151,9 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 			// 靠泊管理（更新实际到达/出发时间）
 			protected.PUT("/berthings/:id/actual-times", h.Berthing.UpdateActualTimes)
 
+			// 船公司重新申请航线（将已废弃的航线重置为待审核）
+			protected.POST("/shipping-lines/:id/reactivate", h.ShippingLine.ReactivateLine)
+
 			// 货主查看船公司列表
 			protected.GET("/shipping-companies", h.ShippingCompany.List)
 
@@ -176,8 +180,11 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 				adminGroup.POST("/vessels", h.Vessel.CreateVessel)
 				adminGroup.PUT("/vessels/:id", h.Vessel.UpdateVessel)
 				adminGroup.DELETE("/vessels/:id", h.Vessel.DeleteVessel)
+				adminGroup.GET("/shipping-lines/pending", h.ShippingLine.ListPendingLines)
 				adminGroup.POST("/shipping-lines", h.ShippingLine.CreateLine)
 				adminGroup.PUT("/shipping-lines/:id", h.ShippingLine.UpdateLine)
+				adminGroup.POST("/shipping-lines/:id/approve", h.ShippingLine.ApproveLine)
+				adminGroup.POST("/shipping-lines/:id/deprecate", h.ShippingLine.DeprecateLine)
 				adminGroup.DELETE("/shipping-lines/:id", h.ShippingLine.DeleteLine)
 				adminGroup.POST("/cities", h.City.CreateCity)
 				adminGroup.PUT("/cities/:id", h.City.UpdateCity)

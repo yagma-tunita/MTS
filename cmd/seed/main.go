@@ -25,6 +25,8 @@ func main() {
 
 func cleanDB(db *gorm.DB) {
 	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
+	// 确保新字段存在
+	db.Exec("ALTER TABLE shipping_line ADD COLUMN line_status TINYINT DEFAULT 1 AFTER description")
 	tables := []string{
 		"segment_capacity_usage", "order_cargo", "shipping_order",
 		"voyage_cargo_note", "voyage_berthing", "shipping_line",
@@ -239,7 +241,7 @@ func seed(db *gorm.DB) {
 			LineName: ld.name, ShippingCompanyID: &ld.cid, PortSequence: &s,
 			TotalDistanceNm: f64Ptr(ld.dist), DeparturePortName: strPtr(ld.depPort),
 			DestinationPortName: strPtr(ld.destPort), Description: strPtr(ld.desc),
-			CreateTime: now, UpdateTime: now,
+			LineStatus: model.LineStatusActive, CreateTime: now, UpdateTime: now,
 		})
 	}
 	for i := range lines { mustCreate(db, &lines[i]) }
@@ -293,14 +295,10 @@ func seed(db *gorm.DB) {
 		vessel := vessels[v.vesselIdx]
 		for seqIdx, s := range v.stops {
 			makeTime := func(d, h int) *time.Time { return timePtr(time.Date(v.date.Year(), v.date.Month(), d, h, 0, 0, 0, time.UTC)) }
-			// 实际到港/离港时间设为与计划相同（用于追踪展示）
-			actualArr := makeTime(s.arriveD, s.arriveT)
-			actualDep := makeTime(s.departD, s.departT)
 			vb := model.VoyageBerthing{
 				LineID: &lines[v.lineIdx].LineID, VesselID: &vessel.VesselID, VoyageDate: v.date,
 				SequenceNo: int32(seqIdx + 1), PortID: &ports[s.portIdx].PortID,
 				PlannedArrivalTime: makeTime(s.arriveD, s.arriveT), PlannedDepartureTime: makeTime(s.departD, s.departT),
-				ActualArrivalTime: actualArr, ActualDepartureTime: actualDep,
 				IsAdjustable: 1, CreateTime: now, UpdateTime: now,
 			}
 			mustCreate(db, &vb)
@@ -369,15 +367,26 @@ func seed(db *gorm.DB) {
 		cargoName, cargoType string; cq, cw, cv, cup, csub float64
 	}
 	ordersData := []odata{
+		// 各订单分配不同状态：0=待确认, 1=已确认, 2=运输中, 3=已完成
+		// 广州→德班：已支付、已确认（cosco 可见，可测试"发货"）
 		{"ORD20260501a1b2c3d4", 0, 0, nil, nil, 0, 8, "2026-05-01", "2026-05-21", 50 * 85.0, 50, 20, "张伟-13800138001", "Durban Steel Works", 1, 1, "铁矿石 (Iron Ore)", "bulk", 50, 50, 20, 85, 4250},
+		// 广州→桑托斯：未支付、待确认（cosco 可见，可测试"确认"）
 		{"ORD20260501e5f6g7h8", 1, 0, nil, nil, 0, 12, "2026-05-01", "2026-06-15", 100 * 85.0, 100, 40, "李强-13800138002", "Santos Steel Mill", 0, 0, "铁矿石 (Iron Ore)", "bulk", 100, 100, 40, 85, 8500},
-		{"ORD20260701i9j0k1l2", 0, 1, nil, nil, 1, 10, "2026-07-01", "2026-07-26", 200 * 120.0, 200, 800, "张伟-13800138001", "Rotterdam Electronics BV", 1, 1, "智能手机 (Smartphones)", "container", 500, 50, 200, 120, 60000},
-		{"ORD20260801m3n4o5p6", 1, 14, nil, nil, 14, 17, "2026-08-01", "2026-08-21", 200 * 85.0, 200, 400, "张伟-13800138001", "Piraeus Machinery Co.", 0, 0, "机械设备 (Machinery)", "bulk", 500, 200, 400, 150, 75000},
+		// 上海→鹿特丹：已支付、运输中（cosco 可见，可测试"港口更新"）
+		{"ORD20260701i9j0k1l2", 0, 1, nil, nil, 1, 10, "2026-07-01", "2026-07-26", 200 * 120.0, 200, 800, "张伟-13800138001", "Rotterdam Electronics BV", 1, 2, "智能手机 (Smartphones)", "container", 500, 50, 200, 120, 60000},
+		// 东京→比雷埃夫斯：未支付、运输中（maersk 可见，可测试"港口更新"）
+		{"ORD20260801m3n4o5p6", 1, 14, nil, nil, 14, 17, "2026-08-01", "2026-08-21", 200 * 85.0, 200, 400, "张伟-13800138001", "Piraeus Machinery Co.", 0, 2, "机械设备 (Machinery)", "bulk", 500, 200, 400, 150, 75000},
+		// 广州→孟买：未支付、待确认（cosco 可见）
 		{"ORD20260901q7r8s9t0", 1, 0, nil, nil, 0, 6, "2026-09-01", "2026-09-19", 300 * 85.0 * 1.2, 300, 800, "李强-13800138002", "Mumbai Electronics Ltd.", 0, 0, "消费电子 (Consumer Electronics)", "container", 1000, 300, 800, 200, 200000},
+		// 广州→鹿特丹：未支付、待确认（cosco 可见）
 		{"ORD20260815f1g2h3i4", 0, 0, nil, nil, 0, 10, "2026-08-15", "2026-08-29", 80 * 85.0, 80, 160, "王明-13800138006", "Rotterdam Steel Co.", 0, 0, "钢材 (Steel)", "bulk", 80, 80, 160, 85, 6800},
-		{"ORD20260710j5k6l7m8", 0, 1, nil, nil, 1, 2, "2026-07-10", "2026-07-13", 30 * 85.0, 30, 60, "王明-13800138006", "Hong Kong Trading Co.", 1, 1, "纺织品 (Textiles)", "container", 30, 30, 60, 120, 3600},
-		{"ORD20261001n9o0p1q2", 1, 17, nil, nil, 17, 0, "2026-10-01", "2026-10-15", 150 * 85.0, 150, 300, "李强-13800138002", "Guangzhou Import Co.", 0, 0, "化工原料 (Chemicals)", "bulk", 150, 150, 300, 85, 12750},
-		{"ORD20260910r3s4t5u6", 1, 10, nil, nil, 10, 18, "2026-09-10", "2026-09-21", 100 * 85.0 * 1.2, 100, 250, "张伟-13800138001", "LA Distribution Center", 1, 1, "家具 (Furniture)", "container", 100, 100, 250, 120, 12000},
+		// 上海→香港：已支付、运输中（cosco 可见，可测试"港口更新"）
+		{"ORD20260710j5k6l7m8", 0, 1, nil, nil, 1, 2, "2026-07-10", "2026-07-13", 30 * 85.0, 30, 60, "王明-13800138006", "Hong Kong Trading Co.", 1, 2, "纺织品 (Textiles)", "container", 30, 30, 60, 120, 3600},
+		// 比雷埃夫斯→广州：未支付、已确认（msc 可见，可测试"发货"）
+		{"ORD20261001n9o0p1q2", 1, 17, nil, nil, 17, 0, "2026-10-01", "2026-10-15", 150 * 85.0, 150, 300, "李强-13800138002", "Guangzhou Import Co.", 0, 1, "化工原料 (Chemicals)", "bulk", 150, 150, 300, 85, 12750},
+		// 鹿特丹→洛杉矶：已支付、已完成（maersk 可见）
+		{"ORD20260910r3s4t5u6", 1, 10, nil, nil, 10, 18, "2026-09-10", "2026-09-21", 100 * 85.0 * 1.2, 100, 250, "张伟-13800138001", "LA Distribution Center", 1, 3, "家具 (Furniture)", "container", 100, 100, 250, 120, 12000},
+		// 宁波→德班：未支付、待确认（cma 可见）
 		{"ORD20260501v7w8x9y0", 2, 4, nil, nil, 4, 8, "2026-08-20", "2026-09-06", 60 * 85.0, 60, 120, "王明-13800138006", "Durban Logistics Co.", 0, 0, "机械设备 (Machinery)", "bulk", 60, 60, 120, 85, 5100},
 	}
 	for i, od := range ordersData {

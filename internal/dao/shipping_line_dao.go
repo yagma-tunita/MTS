@@ -11,8 +11,8 @@ type ShippingLineDAO interface {
 	GetByID(id int64) (*model.ShippingLine, error)
 	Update(line *model.ShippingLine) error
 	Delete(id int64) error
-	ListByShippingCompany(companyID int64, page, pageSize int) ([]model.ShippingLine, int64, error)
-	List(page, pageSize int, keyword string) ([]model.ShippingLine, int64, error)
+	ListByShippingCompany(companyID int64, page, pageSize int, statusFilter *int8) ([]model.ShippingLine, int64, error)
+	List(page, pageSize int, keyword string, statusFilter *int8) ([]model.ShippingLine, int64, error)
 }
 
 type shippingLineDAOImpl struct {
@@ -54,10 +54,13 @@ func (d *shippingLineDAOImpl) Delete(id int64) error {
 		Update("delete_time", gorm.Expr("NOW()")).Error
 }
 
-func (d *shippingLineDAOImpl) ListByShippingCompany(companyID int64, page, pageSize int) ([]model.ShippingLine, int64, error) {
+func (d *shippingLineDAOImpl) ListByShippingCompany(companyID int64, page, pageSize int, statusFilter *int8) ([]model.ShippingLine, int64, error) {
 	var lines []model.ShippingLine
 	var total int64
 	query := d.db.Model(&model.ShippingLine{}).Scopes(NotDeleted).Where("shipping_company_id = ?", companyID)
+	if statusFilter != nil {
+		query = query.Where("line_status = ?", *statusFilter)
+	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -68,12 +71,15 @@ func (d *shippingLineDAOImpl) ListByShippingCompany(companyID int64, page, pageS
 	return lines, total, err
 }
 
-func (d *shippingLineDAOImpl) List(page, pageSize int, keyword string) ([]model.ShippingLine, int64, error) {
+func (d *shippingLineDAOImpl) List(page, pageSize int, keyword string, statusFilter *int8) ([]model.ShippingLine, int64, error) {
 	var lines []model.ShippingLine
 	var total int64
 	query := d.db.Model(&model.ShippingLine{}).Scopes(NotDeleted)
 	if keyword != "" {
 		query = query.Where("line_name LIKE ?", "%"+keyword+"%")
+	}
+	if statusFilter != nil {
+		query = query.Where("line_status = ?", *statusFilter)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

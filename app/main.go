@@ -233,7 +233,7 @@ func main() {
 	// Handler 负责解析 HTTP 请求、调用 Service、返回 JSON 响应。
 	// Handlers 是聚合结构体，包含所有领域 handler，传给路由注册。
 	handlers := handler.NewHandlers(
-		orderSvc, voyageSvc, shipperCompanySvc, shippingCompanySvc,
+		db, orderSvc, voyageSvc, shipperCompanySvc, shippingCompanySvc,
 		adminSvc, portSvc, vesselSvc, shippingLineSvc, jwtSvc, importExportSvc,
 		notifSvc, reportSvc, berthingSvc, citySvc, cargoSvc,
 	)

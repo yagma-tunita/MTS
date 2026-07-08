@@ -23,6 +23,8 @@ package handler
 import (
 	"backend/internal/service" // service 接口层：业务编排 + 事务管理
 	"backend/pkg/jwt"           // JWT 服务：token 签发/验证/刷新
+
+	"gorm.io/gorm"
 )
 
 // Handlers 聚合所有领域 handler，作为统一入口注册到 router。
@@ -104,6 +106,7 @@ type Handlers struct {
 //   - berthingSvc:        靠泊服务——更新实际到达/出发时间
 //   - citySvc:            城市查询服务——分页查询城市列表
 func NewHandlers(
+	db *gorm.DB,
 	orderSvc service.OrderService,
 	voyageSvc service.VoyageService,
 	shipperCompanySvc service.ShipperCompanyService,
@@ -129,7 +132,7 @@ func NewHandlers(
 		Admin:           NewAdminHandler(adminSvc),
 		Port:            NewPortHandler(portSvc),
 		Vessel:          NewVesselHandler(vesselSvc),
-		ShippingLine:    NewShippingLineHandler(shippingLineSvc),
+		ShippingLine:    NewShippingLineHandler(shippingLineSvc, db),
 		ImportExport:    NewImportExportHandler(importExportSvc),
 		Notification:    NewNotificationHandler(notifSvc),
 		Report:          NewReportHandler(reportSvc),

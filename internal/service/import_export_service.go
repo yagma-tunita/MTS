@@ -193,7 +193,7 @@ func (s *importExportServiceImpl) ImportVessels(ctx context.Context, rows [][]st
 
 // ExportShippingLines 导出所有航线为 Excel。
 func (s *importExportServiceImpl) ExportShippingLines(ctx context.Context) ([]byte, error) {
-	lines, _, err := s.shippingLineDAO.List(1, 10000, "")
+	lines, _, err := s.shippingLineDAO.List(1, 10000, "", nil)
 	if err != nil {
 		return nil, err
 	}

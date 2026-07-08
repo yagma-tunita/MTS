@@ -236,10 +236,11 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 // updateOrderStatusRequest 更新订单状态的请求体。
 // Status 取值范围：0(草稿) 1(已确认) 2(运输中) 3(已完成) 4(已取消)
 type updateOrderStatusRequest struct {
-	Status     int8   `json:"status" validate:"required,min=0,max=4"`
-	PortID     int64  `json:"port_id,omitempty"`       // 操作的港口ID（离港/到港），空则使用订单的出发港或目的港
-	ActualTime string `json:"actual_time,omitempty"`   // 实际到港/离港时间，格式 "2006-01-02 15:04:05"
-	Notes      string `json:"notes,omitempty"`         // 操作备注
+	Status          int8                  `json:"status" validate:"required,min=0,max=4"`
+	PortID          int64                 `json:"port_id,omitempty"`
+	ActualTime      string                `json:"actual_time,omitempty"`
+	Notes           string                `json:"notes,omitempty"`
+	CargoOperations []service.PortCargoOp `json:"cargo_operations,omitempty"`
 }
 
 // UpdateOrderStatus 更新订单状态。
@@ -288,7 +289,7 @@ func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 	if req.PortID > 0 {
 		portID = &req.PortID
 	}
-	err = h.svc.UpdateOrderStatus(c.Request.Context(), id, req.Status, actualTime, req.Notes, portID)
+	err = h.svc.UpdateOrderStatus(c.Request.Context(), id, req.Status, actualTime, req.Notes, portID, req.CargoOperations)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			response.ErrorWithCode(c.Writer, appErr.Code, appErr.Message)

@@ -4,6 +4,12 @@ import (
 	"time"
 )
 
+const (
+	LineStatusPending    int8 = 0 // 待管理员审核
+	LineStatusActive     int8 = 1 // 已审核通过，正常使用
+	LineStatusDeprecated int8 = 2 // 已弃用，可重新申请
+)
+
 type ShippingLine struct {
 	LineID              int64      `gorm:"primaryKey;autoIncrement;column:line_id" json:"line_id"`
 	LineName            string     `gorm:"column:line_name;not null" json:"line_name"`
@@ -13,6 +19,7 @@ type ShippingLine struct {
 	DeparturePortName   *string    `gorm:"column:departure_port_name" json:"departure_port_name"`
 	DestinationPortName *string    `gorm:"column:destination_port_name" json:"destination_port_name"`
 	Description         *string    `gorm:"column:description;type:text" json:"description"`
+	LineStatus          int8       `gorm:"column:line_status;default:1" json:"line_status"`
 	CreateTime          time.Time  `gorm:"column:create_time;autoCreateTime" json:"create_time"`
 	UpdateTime          time.Time  `gorm:"column:update_time;autoUpdateTime" json:"update_time"`
 	DeleteTime          *time.Time `gorm:"column:delete_time;index" json:"delete_time"`
