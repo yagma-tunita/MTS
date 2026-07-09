@@ -41,13 +41,14 @@ func (h *ShippingLineHandler) ListLines(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	if pageSize < 1 { pageSize = 20 }; if pageSize > 100 { pageSize = 100 }
 
-	// shipping 角色只能看自己的航线
 	role, _ := c.Get("role")
+	keyword := c.Query("keyword")
+
+	// shipping 角色：看自己所有状态的航线
 	if role == "shipping" {
 		if uid, ok := c.Get("user_id"); ok {
 			if companyID, ok2 := uid.(int64); ok2 {
-				active := int8(model.LineStatusActive)
-				lines, total, err := h.svc.ListLinesByCompany(c.Request.Context(), companyID, page, pageSize, &active)
+				lines, total, err := h.svc.ListLinesByCompany(c.Request.Context(), companyID, page, pageSize, nil)
 				if err != nil {
 					response.InternalServerError(c.Writer, "failed to list lines")
 					return
@@ -58,8 +59,9 @@ func (h *ShippingLineHandler) ListLines(c *gin.Context) {
 		}
 	}
 
-	keyword := c.Query("keyword")
-	lines, total, err := h.svc.ListLines(c.Request.Context(), page, pageSize, keyword, nil)
+	// 货主/shipper角色：只看已启用的航线
+	active := int8(model.LineStatusActive)
+	lines, total, err := h.svc.ListLines(c.Request.Context(), page, pageSize, keyword, &active)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list lines")
 		return
@@ -90,7 +92,13 @@ func (h *ShippingLineHandler) CreateLine(c *gin.Context) {
 	}
 	role, _ := c.Get("role")
 	if role == "shipping" {
-		line.LineStatus = model.LineStatusPending
+		v := int8(model.LineStatusPending)
+		line.LineStatus = &v
+		if uid, ok := c.Get("user_id"); ok {
+			if companyID, ok2 := uid.(int64); ok2 {
+				line.ShippingCompanyID = &companyID
+			}
+		}
 	}
 	if err := h.svc.CreateLine(c.Request.Context(), &line); err != nil {
 		response.InternalServerError(c.Writer, "failed to create line")
@@ -209,6 +217,62 @@ func (h *ShippingLineHandler) DeprecateLine(c *gin.Context) {
 	response.Success(c.Writer, gin.H{"message": "line deprecated"})
 }
 
+func (h *ShippingLineHandler) GetAssignedVessels(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		response.BadRequest(c.Writer, "invalid line id")
+		return
+	}
+	var vesselIDs []int64
+	if err := h.db.Model(&model.LineVessel{}).Where("line_id = ?", id).Pluck("vessel_id", &vesselIDs).Error; err != nil {
+		response.InternalServerError(c.Writer, "failed to get assigned vessels")
+		return
+	}
+	response.Success(c.Writer, gin.H{"vessel_ids": vesselIDs})
+}
+
+func (h *ShippingLineHandler) AssignVessel(c *gin.Context) {
+	lineIDStr := c.Param("id")
+	lineID, err := strconv.ParseInt(lineIDStr, 10, 64)
+	if err != nil {
+		response.BadRequest(c.Writer, "invalid line id")
+		return
+	}
+	var req struct {
+		VesselID int64 `json:"vessel_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c.Writer, "invalid request body")
+		return
+	}
+	if err := h.db.Create(&model.LineVessel{LineID: lineID, VesselID: req.VesselID}).Error; err != nil {
+		response.InternalServerError(c.Writer, "failed to assign vessel")
+		return
+	}
+	response.Success(c.Writer, gin.H{"message": "vessel assigned"})
+}
+
+func (h *ShippingLineHandler) UnassignVessel(c *gin.Context) {
+	lineIDStr := c.Param("id")
+	lineID, err := strconv.ParseInt(lineIDStr, 10, 64)
+	if err != nil {
+		response.BadRequest(c.Writer, "invalid line id")
+		return
+	}
+	vesselIDStr := c.Param("vesselId")
+	vesselID, err := strconv.ParseInt(vesselIDStr, 10, 64)
+	if err != nil {
+		response.BadRequest(c.Writer, "invalid vessel id")
+		return
+	}
+	if err := h.db.Delete(&model.LineVessel{}, "line_id = ? AND vessel_id = ?", lineID, vesselID).Error; err != nil {
+		response.InternalServerError(c.Writer, "failed to unassign vessel")
+		return
+	}
+	response.Success(c.Writer, gin.H{"message": "vessel unassigned"})
+}
+
 func (h *ShippingLineHandler) ReactivateLine(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -231,7 +295,7 @@ func (h *ShippingLineHandler) ReactivateLine(c *gin.Context) {
 		response.NotFound(c.Writer, "line not found")
 		return
 	}
-	if line.LineStatus != model.LineStatusDeprecated {
+	if line.LineStatus == nil || *line.LineStatus != model.LineStatusDeprecated {
 		response.BadRequest(c.Writer, "only deprecated lines can be reactivated")
 		return
 	}

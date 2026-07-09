@@ -121,7 +121,15 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 			protected.GET("/shipping-lines", h.ShippingLine.ListLines)
 			protected.GET("/shipping-lines/:id", h.ShippingLine.GetLine)
 			protected.GET("/shipping-lines/:id/port-sequence", h.ShippingLine.GetPortSequence)
+			protected.GET("/shipping-lines/:id/vessels", h.ShippingLine.GetAssignedVessels)
+			protected.POST("/shipping-lines/:id/vessels", h.ShippingLine.AssignVessel)
+			protected.DELETE("/shipping-lines/:id/vessels/:vesselId", h.ShippingLine.UnassignVessel)
+			protected.POST("/shipping-lines", h.ShippingLine.CreateLine)
 			protected.DELETE("/shipping-lines/:id", h.ShippingLine.DeleteLine)
+
+			// 航次管理（创建完整航次、分组航次列表、航次详情）
+			protected.POST("/voyages", h.Voyage.CreateVoyage)
+			protected.GET("/voyages", h.Voyage.ListVoyages)
 
 			// 订单支付
 			protected.POST("/orders/:id/pay", h.Order.PayOrder)
@@ -153,6 +161,9 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 
 			// 船公司重新申请航线（将已废弃的航线重置为待审核）
 			protected.POST("/shipping-lines/:id/reactivate", h.ShippingLine.ReactivateLine)
+
+			// 货物类型列表（所有角色通用）
+			protected.GET("/cargo-types", h.CargoType.ListAll)
 
 			// 货主查看船公司列表
 			protected.GET("/shipping-companies", h.ShippingCompany.List)
@@ -189,6 +200,12 @@ func Setup(h *handler.Handlers, jwtSvc jwt.JWTService) *gin.Engine {
 				adminGroup.POST("/cities", h.City.CreateCity)
 				adminGroup.PUT("/cities/:id", h.City.UpdateCity)
 				adminGroup.DELETE("/cities/:id", h.City.DeleteCity)
+
+				// 货物类型管理
+				adminGroup.GET("/cargo-types", h.CargoType.List)
+				adminGroup.POST("/cargo-types", h.CargoType.Create)
+				adminGroup.PUT("/cargo-types/:id", h.CargoType.Update)
+				adminGroup.DELETE("/cargo-types/:id", h.CargoType.Delete)
 			}
 		}
 	}

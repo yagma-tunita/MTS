@@ -15,6 +15,28 @@ import (
 	"gorm.io/gorm"
 )
 
+// VoyageGroup 航次分组信息（按 line_id+vessel_id+voyage_date 分组）
+type VoyageGroup struct {
+	LineID     int64                  `json:"line_id"`
+	VesselID   int64                  `json:"vessel_id"`
+	VoyageDate string                 `json:"voyage_date"`
+	LineName   string                 `json:"line_name"`
+	VesselName string                 `json:"vessel_name"`
+	PortCount  int                    `json:"port_count"`
+	PortStops  []VoyagePortStop       `json:"port_stops,omitempty"`
+}
+
+type VoyagePortStop struct {
+	BerthingID           int64      `json:"berthing_id"`
+	SequenceNo           int32      `json:"sequence_no"`
+	PortID               int64      `json:"port_id"`
+	PortName             string     `json:"port_name"`
+	PlannedArrivalTime   *time.Time `json:"planned_arrival_time"`
+	PlannedDepartureTime *time.Time `json:"planned_departure_time"`
+	ActualArrivalTime    *time.Time `json:"actual_arrival_time"`
+	ActualDepartureTime  *time.Time `json:"actual_departure_time"`
+}
+
 // VoyageService 航次服务接口。
 //
 // 提供的功能：
@@ -24,6 +46,10 @@ type VoyageService interface {
 	GetRemainingCapacity(ctx context.Context, lineID, vesselID int64, voyageDate string, startPortID, endPortID int64) (float64, error)
 	RecommendVoyages(ctx context.Context, startPortID, endPortID int64, requiredTon float64) ([]VoyageRecommendation, error)
 	CreateVoyageBerthing(ctx context.Context, berthing *model.VoyageBerthing, unitPrice *float64) error
+	CreateVoyage(ctx context.Context, lineID, vesselID int64, voyageDate time.Time, berthings []model.VoyageBerthing, unitPrice *float64) error
+	ListVoyagesByCompany(ctx context.Context, companyID int64, page, pageSize int) ([]VoyageGroup, int64, error)
+	ListVoyages(ctx context.Context, page, pageSize int) ([]VoyageGroup, int64, error)
+	GetVoyageDetail(ctx context.Context, lineID, vesselID int64, voyageDate time.Time) (*VoyageGroup, error)
 }
 
 // VoyageRecommendation 航次推荐结果的一条记录。
@@ -270,5 +296,333 @@ func (s *voyageServiceImpl) CreateVoyageBerthing(ctx context.Context, berthing *
 			*berthing.LineID, *berthing.VesselID, berthing.VoyageDate, berthing.SequenceNo, createErr)
 	}
 	return nil
+}
+
+// CreateVoyage 批量创建完整航次（所有港口靠泊记录 + cargo notes）
+func (s *voyageServiceImpl) CreateVoyage(ctx context.Context, lineID, vesselID int64, voyageDate time.Time, berthings []model.VoyageBerthing, unitPrice *float64) error {
+	up := 0.0
+	if unitPrice != nil {
+		up = *unitPrice
+	}
+
+	// 第一条为 LOAD，最后一条为 UNLOAD，中间为 LOAD
+	for i := range berthings {
+		berthings[i].LineID = &lineID
+		berthings[i].VesselID = &vesselID
+		berthings[i].VoyageDate = voyageDate
+		berthings[i].SequenceNo = int32(i + 1)
+	}
+
+	totalStops := len(berthings)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for i, b := range berthings {
+			if err := tx.Create(&b).Error; err != nil {
+				return err
+			}
+			op := "LOAD"
+			if i == totalStops-1 {
+				op = "UNLOAD"
+			}
+			cn := "待定"
+			ct := "bulk"
+			z := 0.0
+			note := &model.VoyageCargoNote{
+				LineID:           &lineID,
+				VesselID:         &vesselID,
+				VoyageDate:       voyageDate,
+				SequenceNo:       b.SequenceNo,
+				CargoName:        &cn,
+				CargoType:        &ct,
+				Quantity:         &z,
+				WeightTon:        &z,
+				VolumeCubicMeter: &z,
+				UnitPrice:        &up,
+				Subtotal:         &z,
+				OperationType:    &op,
+				CreateTime:       time.Now(),
+				UpdateTime:       time.Now(),
+			}
+			if err := tx.Create(note).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ListVoyagesByCompany 查询船公司下的所有航次（分组）
+func (s *voyageServiceImpl) ListVoyagesByCompany(ctx context.Context, companyID int64, page, pageSize int) ([]VoyageGroup, int64, error) {
+	type voyageKey struct {
+		LineID     int64
+		VesselID   int64
+		VoyageDate string
+	}
+	var rows []struct {
+		LineID     int64
+		VesselID   int64
+		VoyageDate string
+	}
+	var total int64
+	countQuery := s.db.Table("voyage_berthing").
+		Joins("JOIN shipping_line ON voyage_berthing.line_id = shipping_line.line_id").
+		Where("shipping_line.shipping_company_id = ? AND shipping_line.delete_time IS NULL", companyID).
+		Select("COUNT(DISTINCT CONCAT(voyage_berthing.line_id, '-', voyage_berthing.vessel_id, '-', voyage_berthing.voyage_date))")
+	if err := countQuery.Scan(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	if err := s.db.Table("voyage_berthing").
+		Select("DISTINCT voyage_berthing.line_id, voyage_berthing.vessel_id, voyage_berthing.voyage_date").
+		Joins("JOIN shipping_line ON voyage_berthing.line_id = shipping_line.line_id").
+		Where("shipping_line.shipping_company_id = ? AND shipping_line.delete_time IS NULL", companyID).
+		Order("voyage_berthing.voyage_date DESC").
+		Offset(offset).Limit(pageSize).
+		Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	keys := make([]voyageKey, len(rows))
+	dateSet := make(map[voyageKey]string)
+	for i, r := range rows {
+		voyageDate := r.VoyageDate
+		if len(voyageDate) >= 10 {
+			voyageDate = voyageDate[:10]
+		}
+		keys[i] = voyageKey{LineID: r.LineID, VesselID: r.VesselID, VoyageDate: r.VoyageDate}
+		dateSet[keys[i]] = voyageDate
+	}
+
+	// 加载所有相关靠泊记录
+	type berthingRow struct {
+		BerthingID           int64
+		LineID               int64
+		VesselID             int64
+		VoyageDate           string
+		SequenceNo           int32
+		PortID               int64
+		PortName             string
+		PlannedArrivalTime   *time.Time
+		PlannedDepartureTime *time.Time
+		ActualArrivalTime    *time.Time
+		ActualDepartureTime  *time.Time
+	}
+	var berthingRows []berthingRow
+	s.db.Table("voyage_berthing").
+		Select(`voyage_berthing.berthing_id, voyage_berthing.line_id, voyage_berthing.vessel_id,
+		        voyage_berthing.voyage_date, voyage_berthing.sequence_no, voyage_berthing.port_id,
+		        COALESCE(port.port_name, '') as port_name,
+		        voyage_berthing.planned_arrival_time, voyage_berthing.planned_departure_time,
+		        voyage_berthing.actual_arrival_time, voyage_berthing.actual_departure_time`).
+		Joins("LEFT JOIN port ON voyage_berthing.port_id = port.port_id").
+		Joins("JOIN shipping_line ON voyage_berthing.line_id = shipping_line.line_id").
+		Where("shipping_line.shipping_company_id = ? AND shipping_line.delete_time IS NULL", companyID).
+		Order("voyage_berthing.voyage_date DESC, voyage_berthing.line_id, voyage_berthing.vessel_id, voyage_berthing.sequence_no ASC").
+		Scan(&berthingRows)
+
+	// 分组
+	groupMap := make(map[voyageKey]*VoyageGroup)
+
+	for _, br := range berthingRows {
+		vk := voyageKey{LineID: br.LineID, VesselID: br.VesselID, VoyageDate: br.VoyageDate}
+		vd := br.VoyageDate
+		if len(vd) >= 10 {
+			vd = vd[:10]
+		}
+		if _, ok := groupMap[vk]; !ok {
+			// 获取 line_name 和 vessel_name
+			var line model.ShippingLine
+			s.db.Select("line_name").First(&line, br.LineID)
+			var vessel model.Vessel
+			s.db.Select("vessel_name").First(&vessel, br.VesselID)
+			groupMap[vk] = &VoyageGroup{
+				LineID:     br.LineID,
+				VesselID:   br.VesselID,
+				VoyageDate: vd,
+				LineName:   line.LineName,
+				VesselName: vessel.VesselName,
+			}
+		}
+		g := groupMap[vk]
+		g.PortCount++
+		g.PortStops = append(g.PortStops, VoyagePortStop{
+			BerthingID:           br.BerthingID,
+			SequenceNo:           br.SequenceNo,
+			PortID:               br.PortID,
+			PortName:             br.PortName,
+			PlannedArrivalTime:   br.PlannedArrivalTime,
+			PlannedDepartureTime: br.PlannedDepartureTime,
+			ActualArrivalTime:    br.ActualArrivalTime,
+			ActualDepartureTime:  br.ActualDepartureTime,
+		})
+	}
+
+	// 按分页结果顺序返回
+	result := make([]VoyageGroup, 0, len(rows))
+	for _, k := range keys {
+		if g, ok := groupMap[k]; ok {
+			result = append(result, *g)
+		}
+	}
+	return result, total, nil
+}
+
+// ListVoyages 查询所有航次（分组）
+func (s *voyageServiceImpl) ListVoyages(ctx context.Context, page, pageSize int) ([]VoyageGroup, int64, error) {
+	type voyageKey struct {
+		LineID     int64
+		VesselID   int64
+		VoyageDate string
+	}
+	var rows []struct {
+		LineID     int64
+		VesselID   int64
+		VoyageDate string
+	}
+	var total int64
+	countQuery := s.db.Table("voyage_berthing").
+		Select("COUNT(DISTINCT CONCAT(line_id, '-', vessel_id, '-', voyage_date))")
+	if err := countQuery.Scan(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	if err := s.db.Table("voyage_berthing").
+		Select("DISTINCT line_id, vessel_id, voyage_date").
+		Order("voyage_date DESC").
+		Offset(offset).Limit(pageSize).
+		Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	keys := make([]voyageKey, len(rows))
+	for i, r := range rows {
+		keys[i] = voyageKey{LineID: r.LineID, VesselID: r.VesselID, VoyageDate: r.VoyageDate}
+	}
+
+	type berthingRow struct {
+		BerthingID           int64
+		LineID               int64
+		VesselID             int64
+		VoyageDate           string
+		SequenceNo           int32
+		PortID               int64
+		PortName             string
+		PlannedArrivalTime   *time.Time
+		PlannedDepartureTime *time.Time
+		ActualArrivalTime    *time.Time
+		ActualDepartureTime  *time.Time
+	}
+	var berthingRows []berthingRow
+	s.db.Table("voyage_berthing").
+		Select(`voyage_berthing.berthing_id, voyage_berthing.line_id, voyage_berthing.vessel_id,
+		        voyage_berthing.voyage_date, voyage_berthing.sequence_no, voyage_berthing.port_id,
+		        COALESCE(port.port_name, '') as port_name,
+		        voyage_berthing.planned_arrival_time, voyage_berthing.planned_departure_time,
+		        voyage_berthing.actual_arrival_time, voyage_berthing.actual_departure_time`).
+		Joins("LEFT JOIN port ON voyage_berthing.port_id = port.port_id").
+		Order("voyage_berthing.voyage_date DESC, voyage_berthing.line_id, voyage_berthing.vessel_id, voyage_berthing.sequence_no ASC").
+		Scan(&berthingRows)
+
+	groupMap := make(map[voyageKey]*VoyageGroup)
+	for _, br := range berthingRows {
+		vk := voyageKey{LineID: br.LineID, VesselID: br.VesselID, VoyageDate: br.VoyageDate}
+		vd := br.VoyageDate
+		if len(vd) >= 10 {
+			vd = vd[:10]
+		}
+		if _, ok := groupMap[vk]; !ok {
+			var line model.ShippingLine
+			s.db.Select("line_name").First(&line, br.LineID)
+			var vessel model.Vessel
+			s.db.Select("vessel_name").First(&vessel, br.VesselID)
+			groupMap[vk] = &VoyageGroup{
+				LineID:     br.LineID,
+				VesselID:   br.VesselID,
+				VoyageDate: vd,
+				LineName:   line.LineName,
+				VesselName: vessel.VesselName,
+			}
+		}
+		g := groupMap[vk]
+		g.PortCount++
+		g.PortStops = append(g.PortStops, VoyagePortStop{
+			BerthingID:           br.BerthingID,
+			SequenceNo:           br.SequenceNo,
+			PortID:               br.PortID,
+			PortName:             br.PortName,
+			PlannedArrivalTime:   br.PlannedArrivalTime,
+			PlannedDepartureTime: br.PlannedDepartureTime,
+			ActualArrivalTime:    br.ActualArrivalTime,
+			ActualDepartureTime:  br.ActualDepartureTime,
+		})
+	}
+
+	result := make([]VoyageGroup, 0, len(keys))
+	for _, k := range keys {
+		if g, ok := groupMap[k]; ok {
+			result = append(result, *g)
+		}
+	}
+	return result, total, nil
+}
+
+// GetVoyageDetail 查询单个航次详情（所有港口靠泊记录）
+func (s *voyageServiceImpl) GetVoyageDetail(ctx context.Context, lineID, vesselID int64, voyageDate time.Time) (*VoyageGroup, error) {
+	type berthingRow struct {
+		BerthingID           int64
+		SequenceNo           int32
+		PortID               int64
+		PortName             string
+		PlannedArrivalTime   *time.Time
+		PlannedDepartureTime *time.Time
+		ActualArrivalTime    *time.Time
+		ActualDepartureTime  *time.Time
+	}
+	var rows []berthingRow
+	if err := s.db.Table("voyage_berthing").
+		Select(`voyage_berthing.berthing_id, voyage_berthing.sequence_no, voyage_berthing.port_id,
+		        COALESCE(port.port_name, '') as port_name,
+		        voyage_berthing.planned_arrival_time, voyage_berthing.planned_departure_time,
+		        voyage_berthing.actual_arrival_time, voyage_berthing.actual_departure_time`).
+		Joins("LEFT JOIN port ON voyage_berthing.port_id = port.port_id").
+		Where("voyage_berthing.line_id = ? AND voyage_berthing.vessel_id = ? AND voyage_berthing.voyage_date = ?",
+			lineID, vesselID, voyageDate).
+		Order("sequence_no ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, pkgerr.NotFound("voyage not found")
+	}
+
+	var line model.ShippingLine
+	s.db.Select("line_name").First(&line, lineID)
+	var vessel model.Vessel
+	s.db.Select("vessel_name").First(&vessel, vesselID)
+
+	stops := make([]VoyagePortStop, len(rows))
+	for i, r := range rows {
+		stops[i] = VoyagePortStop{
+			BerthingID:           r.BerthingID,
+			SequenceNo:           r.SequenceNo,
+			PortID:               r.PortID,
+			PortName:             r.PortName,
+			PlannedArrivalTime:   r.PlannedArrivalTime,
+			PlannedDepartureTime: r.PlannedDepartureTime,
+			ActualArrivalTime:    r.ActualArrivalTime,
+			ActualDepartureTime:  r.ActualDepartureTime,
+		}
+	}
+
+	return &VoyageGroup{
+		LineID:     lineID,
+		VesselID:   vesselID,
+		VoyageDate: voyageDate.Format("2006-01-02"),
+		LineName:   line.LineName,
+		VesselName: vessel.VesselName,
+		PortCount:  len(stops),
+		PortStops:  stops,
+	}, nil
 }
 

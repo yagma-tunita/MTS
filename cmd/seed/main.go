@@ -25,13 +25,12 @@ func main() {
 
 func cleanDB(db *gorm.DB) {
 	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
-	// 确保新字段存在
-	db.Exec("ALTER TABLE shipping_line ADD COLUMN line_status TINYINT DEFAULT 1 AFTER description")
 	tables := []string{
 		"segment_capacity_usage", "order_cargo", "shipping_order",
 		"voyage_cargo_note", "voyage_berthing", "shipping_line",
 		"vessel", "berth", "port", "city",
-		"shipper_company", "shipping_company", "admin",
+		"shipper_company", "shipping_company", "admin", "cargo_type",
+		"line_vessel",
 	}
 	for _, t := range tables {
 		db.Exec("DELETE FROM " + t)
@@ -241,7 +240,7 @@ func seed(db *gorm.DB) {
 			LineName: ld.name, ShippingCompanyID: &ld.cid, PortSequence: &s,
 			TotalDistanceNm: f64Ptr(ld.dist), DeparturePortName: strPtr(ld.depPort),
 			DestinationPortName: strPtr(ld.destPort), Description: strPtr(ld.desc),
-			LineStatus: model.LineStatusActive, CreateTime: now, UpdateTime: now,
+			LineStatus: ptrInt8(model.LineStatusActive), CreateTime: now, UpdateTime: now,
 		})
 	}
 	for i := range lines { mustCreate(db, &lines[i]) }
@@ -359,6 +358,18 @@ func seed(db *gorm.DB) {
 	})
 	fmt.Println("Created specific cargo notes")
 
+	// ===== Cargo Types =====
+	cargoTypes := []model.CargoType{
+		{TypeName: "散货", TypeCode: "bulk", Description: strPtr("散装货物，如矿石、煤炭、谷物等")},
+		{TypeName: "集装箱", TypeCode: "container", Description: strPtr("标准集装箱货物")},
+		{TypeName: "液体", TypeCode: "liquid", Description: strPtr("液体货物，如石油、化工原料等")},
+		{TypeName: "冷藏货", TypeCode: "reefer", Description: strPtr("需要冷藏运输的货物")},
+		{TypeName: "危险品", TypeCode: "dangerous", Description: strPtr("危险货物，需特殊标识和操作")},
+		{TypeName: "超大件", TypeCode: " oversized", Description: strPtr("超长超重超高超宽货物")},
+	}
+	for i := range cargoTypes { cargoTypes[i].CreateTime = now; cargoTypes[i].UpdateTime = now; mustCreate(db, &cargoTypes[i]) }
+	fmt.Println("Created 6 cargo types")
+
 	// ===== 10 Sample Orders =====
 	type odata struct {
 		no string; sidx, cidx int; loadNote, unloadNote *model.VoyageCargoNote
@@ -447,3 +458,4 @@ func mustCreate(db *gorm.DB, value interface{}) {
 func strPtr(s string) *string { return &s }
 func f64Ptr(f float64) *float64 { return &f }
 func timePtr(t time.Time) *time.Time { return &t }
+func ptrInt8(v int8) *int8 { return &v }

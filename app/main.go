@@ -96,6 +96,16 @@ func main() {
 		}
 	}
 
+	// 新表（cargo_type, line_vessel）无条件自动创建，不依赖 AUTO_MIGRATE
+	if err := db.AutoMigrate(
+		&model.CargoType{},
+		&model.LineVessel{},
+	); err != nil {
+		slog.Error("auto migrate new tables failed", "error", err)
+	} else {
+		slog.Info("new tables auto migration completed")
+	}
+
 	// ═══════════════════════════════════════════════════════════════
 	// 第 5 步：初始化 JWT 服务
 	// ═══════════════════════════════════════════════════════════════
@@ -221,6 +231,10 @@ func main() {
 	// 靠泊服务（更新实际到达/出发时间）：
 	berthingSvc := service.NewVoyageBerthingService(berthingDAO)
 
+	// 货物类型 DAO + Service：
+	cargoTypeDAO := dao.NewCargoTypeDAO(db)
+	cargoTypeSvc := service.NewCargoTypeService(cargoTypeDAO)
+
 	// 货物查询服务（admin 查看所有货物）：
 	cargoSvc := service.NewCargoService(orderCargoDAO)
 
@@ -235,7 +249,7 @@ func main() {
 	handlers := handler.NewHandlers(
 		db, orderSvc, voyageSvc, shipperCompanySvc, shippingCompanySvc,
 		adminSvc, portSvc, vesselSvc, shippingLineSvc, jwtSvc, importExportSvc,
-		notifSvc, reportSvc, berthingSvc, citySvc, cargoSvc,
+		notifSvc, reportSvc, berthingSvc, citySvc, cargoSvc, cargoTypeSvc,
 	)
 
 	// ═══════════════════════════════════════════════════════════════

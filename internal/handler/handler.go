@@ -83,6 +83,7 @@ type Handlers struct {
 	Berthing        *BerthingHandler        // 靠泊记录管理
 	City            *CityHandler            // 城市查询
 	Cargo           *CargoHandler           // 货物管理
+	CargoType       *CargoTypeHandler       // 货物类型管理
 }
 
 // NewHandlers 创建所有 Handler 实例，依赖 service 层和 jwt 服务。
@@ -122,6 +123,7 @@ func NewHandlers(
 	berthingSvc service.VoyageBerthingService,
 	citySvc service.CityService,
 	cargoSvc service.CargoService,
+	cargoTypeSvc service.CargoTypeService,
 ) *Handlers {
 	return &Handlers{
 		Auth:            NewAuthHandler(shipperCompanySvc, shippingCompanySvc, adminSvc, jwtSvc),
@@ -139,5 +141,6 @@ func NewHandlers(
 		Berthing:        NewBerthingHandler(berthingSvc),
 		City:            NewCityHandler(citySvc),
 		Cargo:           NewCargoHandler(cargoSvc),
+		CargoType:       NewCargoTypeHandler(cargoTypeSvc),
 	}
 }

@@ -740,8 +740,10 @@ func (s *orderServiceImpl) GetOrderByID(ctx context.Context, orderID int64) (*mo
 		Preload("ShipperCompany").
 		Preload("City").
 		Preload("OrderCargos").
-		Preload("LoadNote").
-		Preload("UnloadNote").
+		Preload("LoadNote.Vessel").
+		Preload("LoadNote.Line").
+		Preload("UnloadNote.Vessel").
+		Preload("UnloadNote.Line").
 		Preload("DeparturePort").
 		Preload("DestinationPort").
 		First(&order, orderID).Error
@@ -776,6 +778,8 @@ func (s *orderServiceImpl) ListOrdersByShipper(ctx context.Context, shipperCompa
 	if err := paginatedQuery.
 		Preload("ShipperCompany").
 		Preload("City").
+		Preload("LoadNote.Vessel").
+		Preload("LoadNote.Line").
 		Preload("DeparturePort").
 		Preload("DestinationPort").
 		Find(&orders).Error; err != nil {
@@ -810,6 +814,8 @@ func (s *orderServiceImpl) ListOrdersByShippingCompany(ctx context.Context, comp
 	var orders []model.ShippingOrder
 	if err := paginatedQuery.
 		Preload("City").
+		Preload("LoadNote.Vessel").
+		Preload("LoadNote.Line").
 		Preload("DeparturePort").
 		Preload("DestinationPort").
 		Preload("ShipperCompany").
@@ -838,6 +844,8 @@ func (s *orderServiceImpl) ListAllOrders(ctx context.Context, req PageRequest, o
 	var orders []model.ShippingOrder
 	if err := paginatedQuery.
 		Preload("ShipperCompany").
+		Preload("LoadNote.Vessel").
+		Preload("LoadNote.Line").
 		Preload("DeparturePort").
 		Preload("DestinationPort").
 		Find(&orders).Error; err != nil {
