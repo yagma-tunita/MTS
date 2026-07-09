@@ -795,8 +795,8 @@ func (s *orderServiceImpl) ListOrdersByShippingCompany(ctx context.Context, comp
 		req.AllowedSort = DefaultOrderSortFields()
 	}
 	query := s.db.Model(&model.ShippingOrder{}).Scopes(dao.NotDeleted).
-		Joins("JOIN voyage_cargo_note ON shipping_order.load_note_id = voyage_cargo_note.note_id").
-		Joins("JOIN shipping_line ON voyage_cargo_note.line_id = shipping_line.line_id").
+		Joins("LEFT JOIN voyage_cargo_note ON shipping_order.load_note_id = voyage_cargo_note.note_id").
+		Joins("LEFT JOIN shipping_line ON voyage_cargo_note.line_id = shipping_line.line_id").
 		Where("shipping_line.shipping_company_id = ? AND shipping_line.delete_time IS NULL", companyID)
 
 	if orderNo != "" {
@@ -863,8 +863,8 @@ func (s *orderServiceImpl) CheckOrderBelongsToShippingCompany(ctx context.Contex
 	var count int64
 	err := s.db.Model(&model.ShippingOrder{}).
 		Scopes(dao.NotDeleted).
-		Joins("JOIN voyage_cargo_note ON shipping_order.load_note_id = voyage_cargo_note.note_id").
-		Joins("JOIN shipping_line ON voyage_cargo_note.line_id = shipping_line.line_id").
+		Joins("LEFT JOIN voyage_cargo_note ON shipping_order.load_note_id = voyage_cargo_note.note_id").
+		Joins("LEFT JOIN shipping_line ON voyage_cargo_note.line_id = shipping_line.line_id").
 		Where("shipping_order.order_id = ? AND shipping_line.shipping_company_id = ? AND shipping_line.delete_time IS NULL", orderID, shippingCompanyID).
 		Count(&count).Error
 	return count > 0, err

@@ -1,8 +1,10 @@
 ﻿package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 
 	"backend/internal/model"
@@ -42,6 +44,7 @@ func cleanDB(db *gorm.DB) {
 
 func seed(db *gorm.DB) {
 	now := time.Now()
+	rng := rand.New(rand.NewSource(42))
 
 	// ===== 20 Cities =====
 	cities := []model.City{
@@ -111,66 +114,57 @@ func seed(db *gorm.DB) {
 	fmt.Println("Created 40 berths")
 
 	// ===== Shipper Companies =====
-	sp1, _ := crypto.HashPassword("123456")
-	mustCreate(db, &model.ShipperCompany{
-		CompanyName: "中国远洋贸易有限公司", UnifiedSocialCreditCode: strPtr("91440101MA5XXXXXX1"),
-		LegalRepresentative: strPtr("张伟"), ContactPhone: strPtr("13800138001"),
-		Address: strPtr("广州天河区黄埔大道西100号"), LoginUsername: "shipper01", LoginPassword: sp1,
-		AccountStatus: 1, CreateTime: now, UpdateTime: now,
-	})
-	sp2, _ := crypto.HashPassword("123456")
-	mustCreate(db, &model.ShipperCompany{
-		CompanyName: "上海国际矿业资源公司", UnifiedSocialCreditCode: strPtr("91310000MA5XXXXXX2"),
-		LegalRepresentative: strPtr("李强"), ContactPhone: strPtr("13800138002"),
-		Address: strPtr("上海浦东新区陆家嘴金融区100号"), LoginUsername: "shipper02", LoginPassword: sp2,
-		AccountStatus: 1, CreateTime: now, UpdateTime: now,
-	})
-	sp3, _ := crypto.HashPassword("123456")
-	mustCreate(db, &model.ShipperCompany{
-		CompanyName: "深圳华远物流有限公司", LegalRepresentative: strPtr("王明"),
-		ContactPhone: strPtr("13800138006"), Address: strPtr("深圳南山区蛇口工业区"),
-		LoginUsername: "shipper03", LoginPassword: sp3, AccountStatus: 1, CreateTime: now, UpdateTime: now,
-	})
-	fmt.Println("Created 3 shippers (shipper01/02/03, password: 123456)")
+	shipperData := []struct{ name, credit, rep, phone, addr, user string }{
+		{"中国远洋贸易有限公司", "91440101MA5XXXXXX1", "张伟", "13800138001", "广州天河区黄埔大道西100号", "shipper01"},
+		{"上海国际矿业资源公司", "91310000MA5XXXXXX2", "李强", "13800138002", "上海浦东新区陆家嘴金融区100号", "shipper02"},
+		{"深圳华远物流有限公司", "", "王明", "13800138006", "深圳南山区蛇口工业区", "shipper03"},
+		{"北京东方供应链公司", "", "刘洋", "13800138008", "北京朝阳区国贸大厦", "shipper04"},
+		{"天津港保税区贸易公司", "", "陈静", "13800138009", "天津滨海新区", "shipper05"},
+	}
+	shippers := make([]model.ShipperCompany, 0)
+	for _, sd := range shipperData {
+		sp, _ := crypto.HashPassword("123456")
+		s := model.ShipperCompany{
+			CompanyName: sd.name, UnifiedSocialCreditCode: strPtrOrNil(sd.credit),
+			LegalRepresentative: strPtr(sd.rep), ContactPhone: strPtr(sd.phone),
+			Address: strPtr(sd.addr), LoginUsername: sd.user, LoginPassword: sp,
+			AccountStatus: 1, CreateTime: now, UpdateTime: now,
+		}
+		mustCreate(db, &s)
+		shippers = append(shippers, s)
+	}
+	fmt.Printf("Created %d shippers\n", len(shippers))
 
 	// ===== Shipping Companies =====
-	co1, _ := crypto.HashPassword("123456")
-	cosco := &model.ShippingCompany{
-		CompanyName: "中国远洋海运集团", ContactPerson: strPtr("王建国"), ContactPhone: strPtr("13800138003"),
-		Address: strPtr("北京朝阳区建国路100号"), LoginUsername: "cosco", LoginPassword: co1,
-		AccountStatus: 1, CreateTime: now, UpdateTime: now,
+	type scData struct{ name, contact, phone, addr, user string }
+	scList := []scData{
+		{"中国远洋海运集团", "王建国", "13800138003", "北京朝阳区建国路100号", "cosco"},
+		{"马士基航运(中国)有限公司", "Peter Jensen", "13800138004", "上海黄浦区南京西路100号", "maersk"},
+		{"地中海航运有限公司", "陈志强", "13800138005", "深圳南山区蛇口工业区", "msc"},
+		{"达飞轮船(中国)有限公司", "Jean Dupont", "13800138007", "上海静安区南京西路200号", "cma"},
 	}
-	mustCreate(db, cosco)
-	co2, _ := crypto.HashPassword("123456")
-	maersk := &model.ShippingCompany{
-		CompanyName: "马士基航运(中国)有限公司", ContactPerson: strPtr("Peter Jensen"),
-		ContactPhone: strPtr("13800138004"), Address: strPtr("上海黄浦区南京西路100号"),
-		LoginUsername: "maersk", LoginPassword: co2, AccountStatus: 1, CreateTime: now, UpdateTime: now,
+	companies := make([]*model.ShippingCompany, 0)
+	for _, sc := range scList {
+		p, _ := crypto.HashPassword("123456")
+		c := &model.ShippingCompany{
+			CompanyName: sc.name, ContactPerson: strPtr(sc.contact),
+			ContactPhone: strPtr(sc.phone), Address: strPtr(sc.addr),
+			LoginUsername: sc.user, LoginPassword: p, AccountStatus: 1,
+			CreateTime: now, UpdateTime: now,
+		}
+		mustCreate(db, c)
+		companies = append(companies, c)
 	}
-	mustCreate(db, maersk)
-	co3, _ := crypto.HashPassword("123456")
-	msc := &model.ShippingCompany{
-		CompanyName: "地中海航运有限公司", ContactPerson: strPtr("陈志强"),
-		ContactPhone: strPtr("13800138005"), Address: strPtr("深圳南山区蛇口工业区"),
-		LoginUsername: "msc", LoginPassword: co3, AccountStatus: 1, CreateTime: now, UpdateTime: now,
-	}
-	mustCreate(db, msc)
-	// 新增第四家海运公司
-	co4, _ := crypto.HashPassword("123456")
-	cma := &model.ShippingCompany{
-		CompanyName: "达飞轮船(中国)有限公司", ContactPerson: strPtr("Jean Dupont"),
-		ContactPhone: strPtr("13800138007"), Address: strPtr("上海静安区南京西路200号"),
-		LoginUsername: "cma", LoginPassword: co4, AccountStatus: 1, CreateTime: now, UpdateTime: now,
-	}
-	mustCreate(db, cma)
-	fmt.Println("Created 4 shipping companies (cosco/maersk/msc/cma, password: 123456)")
+	fmt.Printf("Created %d shipping companies\n", len(companies))
+
+	cosco, maersk, msc, cma := companies[0], companies[1], companies[2], companies[3]
 
 	// ===== Admin =====
 	ap, _ := crypto.HashPassword("admin123")
 	mustCreate(db, &model.Admin{Username: "admin", Password: ap, RealName: strPtr("系统管理员"), Role: 1, CreateTime: now, UpdateTime: now})
 	fmt.Println("Created admin (admin/admin123)")
 
-	// ===== 16 Vessels (4 per company) =====
+	// ===== 24 Vessels (6 per company) =====
 	type vData struct{ name, call, imo, vtype string; dwt, speed float64; teu int32 }
 	vesselsData := map[int64][]vData{
 		cosco.CompanyID: {
@@ -178,24 +172,32 @@ func seed(db *gorm.DB) {
 			{"东方巨龙 (Oriental Dragon)", "BODR", "IMO1000002", "Container Ship", 120000, 22.0, 8000},
 			{"丝路号 (Silk Road)", "BSLR", "IMO1000006", "Container Ship", 90000, 21.0, 6000},
 			{"郑和号 (Zheng He)", "BZHE", "IMO1000007", "Container Ship", 150000, 24.0, 10000},
+			{"长城号 (Great Wall)", "BGW", "IMO1000019", "Container Ship", 130000, 23.0, 9000},
+			{"熊猫号 (Panda)", "BPND", "IMO1000020", "Bulk Carrier", 80000, 16.0, 2000},
 		},
 		maersk.CompanyID: {
 			{"Maersk Guangzhou", "MGRZ", "IMO1000003", "Container Ship", 75000, 20.5, 5000},
 			{"Maersk Shanghai", "MSH", "IMO1000009", "Container Ship", 180000, 23.5, 14000},
 			{"Maersk Mumbai", "MMB", "IMO1000010", "Container Ship", 85000, 21.0, 6000},
 			{"Maersk Copenhagen", "MCPH", "IMO1000013", "Container Ship", 95000, 22.0, 7000},
+			{"Maersk Rotterdam", "MRDM", "IMO1000021", "Container Ship", 200000, 24.0, 16000},
+			{"Maersk Singapore", "MSGP", "IMO1000022", "Container Ship", 110000, 21.5, 8000},
 		},
 		msc.CompanyID: {
 			{"MSC Shanghai", "MSSH", "IMO1000005", "Container Ship", 180000, 23.0, 12000},
 			{"MSC Tokyo", "MSTK", "IMO1000011", "Container Ship", 220000, 25.0, 20000},
 			{"MSC Hamburg", "MSHB", "IMO1000012", "Oil Tanker", 200000, 16.5, 0},
 			{"MSC Geneva", "MSG", "IMO1000014", "Container Ship", 130000, 22.5, 10000},
+			{"MSC Paris", "MSPR", "IMO1000023", "Container Ship", 160000, 23.0, 12000},
+			{"MSC London", "MSLD", "IMO1000024", "Container Ship", 190000, 24.0, 15000},
 		},
 		cma.CompanyID: {
 			{"CMA CGM Paris", "CMAP", "IMO1000015", "Container Ship", 140000, 22.5, 11000},
 			{"CMA CGM Marseille", "CMAM", "IMO1000016", "Container Ship", 110000, 21.5, 8000},
 			{"CMA CGM Lyon", "CMAL", "IMO1000017", "Bulk Carrier", 60000, 15.5, 2000},
 			{"CMA CGM Nice", "CMAN", "IMO1000018", "Container Ship", 170000, 23.0, 13000},
+			{"CMA CGM Dubai", "CMDB", "IMO1000025", "Container Ship", 120000, 22.0, 9000},
+			{"CMA CGM Tokyo", "CMTK", "IMO1000026", "Container Ship", 150000, 22.5, 11000},
 		},
 	}
 	vessels := make([]model.Vessel, 0)
@@ -212,7 +214,21 @@ func seed(db *gorm.DB) {
 		}
 	}
 	for i := range vessels { mustCreate(db, &vessels[i]) }
-	fmt.Printf("Created %d vessels (4 per company)\n", len(vessels))
+	fmt.Printf("Created %d vessels (6 per company)\n", len(vessels))
+
+	// vessel index ranges per company: cosco[0-5], maersk[6-11], msc[12-17], cma[18-23]
+	vesselRange := map[int64][2]int{
+		cosco.CompanyID:  {0, 5},
+		maersk.CompanyID: {6, 11},
+		msc.CompanyID:    {12, 17},
+		cma.CompanyID:    {18, 23},
+	}
+	getCompanyVessels := func(cid int64) []int {
+		r := vesselRange[cid]
+		ids := make([]int, 0, r[1]-r[0]+1)
+		for i := r[0]; i <= r[1]; i++ { ids = append(ids, i) }
+		return ids
+	}
 
 	// ===== 15 Shipping Lines =====
 	type lData struct{ name, depPort, destPort, desc, seq string; dist float64; cid int64 }
@@ -246,165 +262,232 @@ func seed(db *gorm.DB) {
 	for i := range lines { mustCreate(db, &lines[i]) }
 	fmt.Printf("Created %d shipping lines\n", len(lines))
 
-	// ===== Voyages =====
-	type voyageData struct{ lineIdx, vesselIdx int; date time.Time; stops []struct{ portIdx, arriveD, arriveT, departD, departT int } }
-	voyages := []voyageData{
-		{0, 0, time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{0, 1, 6, 1, 18}, {5, 5, 8, 6, 18}, {6, 9, 10, 10, 20}, {8, 18, 7, 21, 17}, {12, 10, 8, 15, 12},
-			}},
-		{1, 1, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{1, 1, 6, 1, 20}, {5, 4, 9, 5, 21}, {16, 12, 7, 13, 19}, {17, 18, 7, 19, 15}, {10, 25, 10, 26, 18},
-			}},
-		{2, 4, time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{15, 15, 8, 16, 6}, {14, 17, 12, 18, 10}, {1, 20, 8, 21, 18}, {5, 24, 10, 25, 20}, {10, 5, 9, 6, 17},
-			}},
-		{4, 5, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{14, 1, 8, 2, 6}, {15, 3, 10, 4, 8}, {1, 6, 8, 7, 18}, {5, 10, 10, 11, 20}, {17, 20, 9, 21, 17},
-			}},
-		{5, 8, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{0, 1, 6, 1, 18}, {2, 2, 8, 2, 16}, {5, 5, 10, 6, 20}, {16, 12, 7, 13, 19}, {6, 18, 10, 19, 18},
-			}},
-		{6, 3, time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{0, 15, 6, 15, 20}, {5, 18, 9, 19, 18}, {10, 28, 10, 29, 16},
-			}},
-		{7, 2, time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{1, 10, 6, 10, 20}, {3, 11, 8, 11, 18}, {4, 12, 8, 12, 18}, {2, 13, 10, 13, 18},
-			}},
-		{9, 9, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{17, 1, 8, 1, 18}, {16, 5, 7, 6, 19}, {5, 10, 10, 11, 20}, {0, 15, 8, 15, 18},
-			}},
-		{10, 6, time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{10, 10, 6, 10, 20}, {11, 12, 8, 12, 18}, {18, 20, 10, 21, 16},
-			}},
-		{11, 12, time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC),
-			[]struct{ portIdx, arriveD, arriveT, departD, departT int }{
-				{4, 20, 6, 20, 18}, {2, 21, 8, 21, 18}, {5, 24, 10, 25, 18}, {7, 29, 7, 30, 17}, {8, 5, 8, 6, 16},
-			}},
+	// ===== Line-Vessel assignments =====
+	for _, l := range lines {
+		for _, vi := range getCompanyVessels(*l.ShippingCompanyID) {
+			mustCreate(db, &model.LineVessel{LineID: l.LineID, VesselID: vessels[vi].VesselID, CreateTime: now})
+		}
 	}
-	for _, v := range voyages {
-		vessel := vessels[v.vesselIdx]
-		for seqIdx, s := range v.stops {
-			makeTime := func(d, h int) *time.Time { return timePtr(time.Date(v.date.Year(), v.date.Month(), d, h, 0, 0, 0, time.UTC)) }
-			vb := model.VoyageBerthing{
-				LineID: &lines[v.lineIdx].LineID, VesselID: &vessel.VesselID, VoyageDate: v.date,
-				SequenceNo: int32(seqIdx + 1), PortID: &ports[s.portIdx].PortID,
-				PlannedArrivalTime: makeTime(s.arriveD, s.arriveT), PlannedDepartureTime: makeTime(s.departD, s.departT),
-				IsAdjustable: 1, CreateTime: now, UpdateTime: now,
+	fmt.Println("Assigned vessels to lines")
+
+	// ===== Parse port sequences for voyage generation =====
+	type seqInfo struct{ portIDs []int64; portIndices []int }
+	lineSeqs := make([]seqInfo, len(lines))
+	for li, l := range lines {
+		var ids []int64
+		if err := parseJSON(*l.PortSequence, &ids); err != nil {
+			log.Fatalf("parse port sequence for line %d: %v", li, err)
+		}
+		idxs := make([]int, len(ids))
+		for j, pid := range ids {
+			for pi, p := range ports {
+				if p.PortID == pid { idxs[j] = pi; break }
 			}
-			mustCreate(db, &vb)
-			// auto-create cargo note for each berthing
-			cn := "待定"; ct := "bulk"; op := "LOAD"; z := 0.0
-			mustCreate(db, &model.VoyageCargoNote{
-				LineID: &lines[v.lineIdx].LineID, VesselID: &vessel.VesselID, VoyageDate: v.date,
-				SequenceNo: int32(seqIdx + 1), CargoName: &cn, CargoType: &ct, OperationType: &op,
-				Quantity: &z, WeightTon: &z, VolumeCubicMeter: &z, UnitPrice: &z, Subtotal: &z,
-				CreateTime: now, UpdateTime: now,
+		}
+		lineSeqs[li] = seqInfo{portIDs: ids, portIndices: idxs}
+	}
+
+	// ===== Voyages (programmatic, large scale) =====
+	type voyagePlan struct {
+		lineIdx    int
+		vesselIdx  int
+		date       time.Time
+		unitPrice  float64
+	}
+	voyagePlans := make([]voyagePlan, 0)
+	cargoTypeCodes := []string{"bulk", "container", "liquid", "reefer", "dangerous"}
+
+	startDate := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for li, l := range lines {
+		companyVessels := getCompanyVessels(*l.ShippingCompanyID)
+		numVoyages := 3 + rng.Intn(3) // 3-5 voyages per line
+		for v := 0; v < numVoyages; v++ {
+			vi := companyVessels[rng.Intn(len(companyVessels))]
+			daysOffset := rng.Intn(240) // spread across 8 months
+			d := startDate.AddDate(0, 0, daysOffset)
+			up := 60.0 + rng.Float64()*140.0
+			voyagePlans = append(voyagePlans, voyagePlan{
+				lineIdx: li, vesselIdx: vi, date: d, unitPrice: up,
 			})
 		}
 	}
-	fmt.Println("Created 10 voyages with berthing and cargo notes")
+	fmt.Printf("Planning %d voyages\n", len(voyagePlans))
 
-	// ===== Additional cargo notes for specific voyages =====
-	// Voyage 0 (line1, vessel0): iron ore load/unload
-	q := 150.0; w := 150.0; v := 60.0; up := 85.0; sub := 150.0 * 85.0
-	mustCreate(db, &model.VoyageCargoNote{
-		LineID: &lines[0].LineID, VesselID: &vessels[0].VesselID, VoyageDate: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-		SequenceNo: 1, CargoName: strPtr("铁矿石 (Iron Ore)"), CargoType: strPtr("bulk"),
-		Quantity: &q, WeightTon: &w, VolumeCubicMeter: &v, UnitPrice: &up, Subtotal: &sub,
-		OperationType: strPtr("LOAD"), CargoHandledTon: &w, CumulativeBookedCapacityTon: &w,
-		CreateTime: now, UpdateTime: now,
-	})
-	q2 := 50.0; w2 := 50.0; v2 := 20.0; up2 := 85.0; sub2 := 50.0 * 85.0
-	mustCreate(db, &model.VoyageCargoNote{
-		LineID: &lines[0].LineID, VesselID: &vessels[0].VesselID, VoyageDate: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-		SequenceNo: 4, CargoName: strPtr("铁矿石 (Iron Ore) - 德班卸"), CargoType: strPtr("bulk"),
-		Quantity: &q2, WeightTon: &w2, VolumeCubicMeter: &v2, UnitPrice: &up2, Subtotal: &sub2,
-		OperationType: strPtr("UNLOAD"), CargoHandledTon: &w2,
-		CreateTime: now, UpdateTime: now,
-	})
-	q3 := 100.0; w3 := 100.0; v3 := 40.0; up3 := 85.0; sub3 := 100.0 * 85.0
-	mustCreate(db, &model.VoyageCargoNote{
-		LineID: &lines[0].LineID, VesselID: &vessels[0].VesselID, VoyageDate: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-		SequenceNo: 5, CargoName: strPtr("铁矿石 (Iron Ore)"), CargoType: strPtr("bulk"),
-		Quantity: &q3, WeightTon: &w3, VolumeCubicMeter: &v3, UnitPrice: &up3, Subtotal: &sub3,
-		OperationType: strPtr("UNLOAD"), CargoHandledTon: &w3,
-		CreateTime: now, UpdateTime: now,
-	})
-	// Voyage 1 (line2, vessel1): electronics
-	q4 := 2000.0; w4 := 500.0; v4 := 2000.0; up4 := 120.0; sub4 := 2000.0 * 120.0
-	mustCreate(db, &model.VoyageCargoNote{
-		LineID: &lines[1].LineID, VesselID: &vessels[1].VesselID, VoyageDate: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
-		SequenceNo: 1, CargoName: strPtr("电子产品 (Electronics)"), CargoType: strPtr("container"),
-		Quantity: &q4, WeightTon: &w4, VolumeCubicMeter: &v4, UnitPrice: &up4, Subtotal: &sub4,
-		OperationType: strPtr("LOAD"), CargoHandledTon: &w4, CumulativeBookedCapacityTon: &w4,
-		CreateTime: now, UpdateTime: now,
-	})
-	q5 := 1500.0; w5 := 400.0; v5 := 1500.0; up5 := 150.0; sub5 := 1500.0 * 150.0
-	mustCreate(db, &model.VoyageCargoNote{
-		LineID: &lines[1].LineID, VesselID: &vessels[1].VesselID, VoyageDate: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
-		SequenceNo: 5, CargoName: strPtr("电子产品 (Electronics)"), CargoType: strPtr("container"),
-		Quantity: &q5, WeightTon: &w5, VolumeCubicMeter: &v5, UnitPrice: &up5, Subtotal: &sub5,
-		OperationType: strPtr("UNLOAD"), CargoHandledTon: &w5,
-		CreateTime: now, UpdateTime: now,
-	})
-	fmt.Println("Created specific cargo notes")
+	type createdVoyage struct {
+		lineIdx   int
+		vesselIdx int
+		date      time.Time
+		startPort int
+		endPort   int
+	}
+	createdVoyages := make([]createdVoyage, 0)
+
+	for _, vp := range voyagePlans {
+		l := lines[vp.lineIdx]
+		ves := vessels[vp.vesselIdx]
+		seq := lineSeqs[vp.lineIdx]
+		numStops := len(seq.portIndices)
+
+		voyageDate := vp.date
+		// create berthing for each port in sequence
+		for seqIdx := 0; seqIdx < numStops; seqIdx++ {
+			portIdx := seq.portIndices[seqIdx]
+			arriveD := 1 + seqIdx*3
+			departD := arriveD + 1
+			if departD > 28 { departD = 28 }
+			arriveH := 6 + rng.Intn(4)
+			departH := arriveH + 8 + rng.Intn(4)
+
+			vb := model.VoyageBerthing{
+				LineID: &l.LineID, VesselID: &ves.VesselID, VoyageDate: voyageDate,
+				SequenceNo: int32(seqIdx + 1), PortID: &ports[portIdx].PortID,
+				PlannedArrivalTime:   timePtr(time.Date(voyageDate.Year(), voyageDate.Month(), arriveD, arriveH, 0, 0, 0, time.UTC)),
+				PlannedDepartureTime: timePtr(time.Date(voyageDate.Year(), voyageDate.Month(), departD, departH, 0, 0, 0, time.UTC)),
+				IsAdjustable: 1, CreateTime: now, UpdateTime: now,
+			}
+			mustCreate(db, &vb)
+
+			op := "LOAD"
+			if seqIdx == numStops-1 { op = "UNLOAD" }
+			cn := "待定"
+			ct := "bulk"
+			z := 0.0
+			mustCreate(db, &model.VoyageCargoNote{
+				LineID: &l.LineID, VesselID: &ves.VesselID, VoyageDate: voyageDate,
+				SequenceNo: int32(seqIdx + 1), CargoName: &cn, CargoType: &ct, OperationType: &op,
+				UnitPrice: &vp.unitPrice,
+				Quantity: &z, WeightTon: &z, VolumeCubicMeter: &z, Subtotal: &z,
+				CreateTime: now, UpdateTime: now,
+			})
+		}
+
+		createdVoyages = append(createdVoyages, createdVoyage{
+			lineIdx: vp.lineIdx, vesselIdx: vp.vesselIdx, date: voyageDate,
+			startPort: seq.portIndices[0], endPort: seq.portIndices[numStops-1],
+		})
+	}
+	fmt.Printf("Created %d voyages with berthing and cargo notes\n", len(createdVoyages))
+
+	// ===== Specific cargo notes for a few voyages (so orders can link) =====
+	for i := 0; i < len(createdVoyages) && i < 8; i++ {
+		cv := createdVoyages[i]
+		l := lines[cv.lineIdx]
+		ves := vessels[cv.vesselIdx]
+		seq := lineSeqs[cv.lineIdx]
+		cn := cargonames[rng.Intn(len(cargonames))]
+		ct := cargoTypeCodes[rng.Intn(len(cargoTypeCodes))]
+		q := 50.0 + rng.Float64()*200.0
+		w := q * (0.8 + rng.Float64()*0.4)
+		v := w * (1.0 + rng.Float64())
+		up := 60.0 + rng.Float64()*140.0
+		sub := q * up
+
+		// LOAD at first port
+		mustCreate(db, &model.VoyageCargoNote{
+			LineID: &l.LineID, VesselID: &ves.VesselID, VoyageDate: cv.date,
+			SequenceNo: 1, CargoName: strPtr(cn), CargoType: strPtr(ct),
+			Quantity: &q, WeightTon: &w, VolumeCubicMeter: &v, UnitPrice: &up, Subtotal: &sub,
+			OperationType: strPtr("LOAD"), CargoHandledTon: &w, CumulativeBookedCapacityTon: &w,
+			CreateTime: now, UpdateTime: now,
+		})
+		// UNLOAD at last port
+		lastSeq := int32(len(seq.portIndices))
+		w2 := w * 0.6
+		v2 := w2 * (1.0 + rng.Float64())
+		q2 := q * 0.6
+		sub2 := q2 * up
+		mustCreate(db, &model.VoyageCargoNote{
+			LineID: &l.LineID, VesselID: &ves.VesselID, VoyageDate: cv.date,
+			SequenceNo: lastSeq, CargoName: strPtr(cn), CargoType: strPtr(ct),
+			Quantity: &q2, WeightTon: &w2, VolumeCubicMeter: &v2, UnitPrice: &up, Subtotal: &sub2,
+			OperationType: strPtr("UNLOAD"), CargoHandledTon: &w2,
+			CreateTime: now, UpdateTime: now,
+		})
+	}
+	fmt.Println("Created specific cargo notes for orders")
 
 	// ===== Cargo Types =====
-	cargoTypes := []model.CargoType{
+	ctList := []model.CargoType{
 		{TypeName: "散货", TypeCode: "bulk", Description: strPtr("散装货物，如矿石、煤炭、谷物等")},
 		{TypeName: "集装箱", TypeCode: "container", Description: strPtr("标准集装箱货物")},
 		{TypeName: "液体", TypeCode: "liquid", Description: strPtr("液体货物，如石油、化工原料等")},
 		{TypeName: "冷藏货", TypeCode: "reefer", Description: strPtr("需要冷藏运输的货物")},
 		{TypeName: "危险品", TypeCode: "dangerous", Description: strPtr("危险货物，需特殊标识和操作")},
-		{TypeName: "超大件", TypeCode: " oversized", Description: strPtr("超长超重超高超宽货物")},
+		{TypeName: "超大件", TypeCode: "oversized", Description: strPtr("超长超重超高超宽货物")},
 	}
-	for i := range cargoTypes { cargoTypes[i].CreateTime = now; cargoTypes[i].UpdateTime = now; mustCreate(db, &cargoTypes[i]) }
+	for i := range ctList { ctList[i].CreateTime = now; ctList[i].UpdateTime = now; mustCreate(db, &ctList[i]) }
 	fmt.Println("Created 6 cargo types")
 
-	// ===== 10 Sample Orders =====
-	type odata struct {
-		no string; sidx, cidx int; loadNote, unloadNote *model.VoyageCargoNote
-		depP, destP int; depDate, arrDate string; cost, tw, tv float64
-		contact, consignee string; payStatus int8; orderStatus int8
-		cargoName, cargoType string; cq, cw, cv, cup, csub float64
+	// ===== Orders (large scale) =====
+	type orderGen struct {
+		no        string
+		shipperIdx int
+		cityIdx    int
+		depP       int
+		destP      int
+		depDate    string
+		arrDate    string
+		cargoName  string
+		cargoType  string
+		qty        float64
+		weight     float64
+		volume     float64
+		unitPrice  float64
+		payStatus  int8
+		orderStatus int8
 	}
-	ordersData := []odata{
-		// 各订单分配不同状态：0=待确认, 1=已确认, 2=运输中, 3=已完成
-		// 广州→德班：已支付、已确认（cosco 可见，可测试"发货"）
-		{"ORD20260501a1b2c3d4", 0, 0, nil, nil, 0, 8, "2026-05-01", "2026-05-21", 50 * 85.0, 50, 20, "张伟-13800138001", "Durban Steel Works", 1, 1, "铁矿石 (Iron Ore)", "bulk", 50, 50, 20, 85, 4250},
-		// 广州→桑托斯：未支付、待确认（cosco 可见，可测试"确认"）
-		{"ORD20260501e5f6g7h8", 1, 0, nil, nil, 0, 12, "2026-05-01", "2026-06-15", 100 * 85.0, 100, 40, "李强-13800138002", "Santos Steel Mill", 0, 0, "铁矿石 (Iron Ore)", "bulk", 100, 100, 40, 85, 8500},
-		// 上海→鹿特丹：已支付、运输中（cosco 可见，可测试"港口更新"）
-		{"ORD20260701i9j0k1l2", 0, 1, nil, nil, 1, 10, "2026-07-01", "2026-07-26", 200 * 120.0, 200, 800, "张伟-13800138001", "Rotterdam Electronics BV", 1, 2, "智能手机 (Smartphones)", "container", 500, 50, 200, 120, 60000},
-		// 东京→比雷埃夫斯：未支付、运输中（maersk 可见，可测试"港口更新"）
-		{"ORD20260801m3n4o5p6", 1, 14, nil, nil, 14, 17, "2026-08-01", "2026-08-21", 200 * 85.0, 200, 400, "张伟-13800138001", "Piraeus Machinery Co.", 0, 2, "机械设备 (Machinery)", "bulk", 500, 200, 400, 150, 75000},
-		// 广州→孟买：未支付、待确认（cosco 可见）
-		{"ORD20260901q7r8s9t0", 1, 0, nil, nil, 0, 6, "2026-09-01", "2026-09-19", 300 * 85.0 * 1.2, 300, 800, "李强-13800138002", "Mumbai Electronics Ltd.", 0, 0, "消费电子 (Consumer Electronics)", "container", 1000, 300, 800, 200, 200000},
-		// 广州→鹿特丹：未支付、待确认（cosco 可见）
-		{"ORD20260815f1g2h3i4", 0, 0, nil, nil, 0, 10, "2026-08-15", "2026-08-29", 80 * 85.0, 80, 160, "王明-13800138006", "Rotterdam Steel Co.", 0, 0, "钢材 (Steel)", "bulk", 80, 80, 160, 85, 6800},
-		// 上海→香港：已支付、运输中（cosco 可见，可测试"港口更新"）
-		{"ORD20260710j5k6l7m8", 0, 1, nil, nil, 1, 2, "2026-07-10", "2026-07-13", 30 * 85.0, 30, 60, "王明-13800138006", "Hong Kong Trading Co.", 1, 2, "纺织品 (Textiles)", "container", 30, 30, 60, 120, 3600},
-		// 比雷埃夫斯→广州：未支付、已确认（msc 可见，可测试"发货"）
-		{"ORD20261001n9o0p1q2", 1, 17, nil, nil, 17, 0, "2026-10-01", "2026-10-15", 150 * 85.0, 150, 300, "李强-13800138002", "Guangzhou Import Co.", 0, 1, "化工原料 (Chemicals)", "bulk", 150, 150, 300, 85, 12750},
-		// 鹿特丹→洛杉矶：已支付、已完成（maersk 可见）
-		{"ORD20260910r3s4t5u6", 1, 10, nil, nil, 10, 18, "2026-09-10", "2026-09-21", 100 * 85.0 * 1.2, 100, 250, "张伟-13800138001", "LA Distribution Center", 1, 3, "家具 (Furniture)", "container", 100, 100, 250, 120, 12000},
-		// 宁波→德班：未支付、待确认（cma 可见）
-		{"ORD20260501v7w8x9y0", 2, 4, nil, nil, 4, 8, "2026-08-20", "2026-09-06", 60 * 85.0, 60, 120, "王明-13800138006", "Durban Logistics Co.", 0, 0, "机械设备 (Machinery)", "bulk", 60, 60, 120, 85, 5100},
+	orderList := make([]orderGen, 0)
+
+	// 5 orders per voyage, spread across different voyages
+	for vi, cv := range createdVoyages {
+		if vi%3 != 0 { continue } // every 3rd voyage gets orders
+		seq := lineSeqs[cv.lineIdx]
+		if len(seq.portIndices) < 2 { continue }
+
+		numOrders := 2 + rng.Intn(4) // 2-5 orders per voyage
+		for o := 0; o < numOrders; o++ {
+			si := rng.Intn(len(shippers))
+			ci := rng.Intn(len(cities))
+			startIdx := 0
+			endIdx := len(seq.portIndices) - 1
+			if endIdx > startIdx+1 {
+				endIdx = startIdx + 1 + rng.Intn(endIdx-startIdx)
+			}
+			depP := seq.portIndices[startIdx]
+			destP := seq.portIndices[endIdx]
+			depDate := cv.date.Format("2006-01-02")
+			arrDate := cv.date.AddDate(0, 0, 10+rng.Intn(20)).Format("2006-01-02")
+			cn := cargonames[rng.Intn(len(cargonames))]
+			ct := cargoTypeCodes[rng.Intn(len(cargoTypeCodes))]
+			q := 20.0 + rng.Float64()*100.0
+			w := q * (0.8 + rng.Float64()*0.4)
+			v := w * (1.0 + rng.Float64())
+			up := 60.0 + rng.Float64()*140.0
+			status := int8(rng.Intn(4)) // 0-3
+			pay := int8(0)
+			if status >= 1 { pay = 1 }
+
+			orderNo := fmt.Sprintf("ORD%s%08x", cv.date.Format("20060106"), len(orderList)+1)
+			orderList = append(orderList, orderGen{
+				no: orderNo, shipperIdx: si, cityIdx: ci,
+				depP: depP, destP: destP,
+				depDate: depDate, arrDate: arrDate,
+				cargoName: cn, cargoType: ct, qty: q, weight: w, volume: v, unitPrice: up,
+				payStatus: pay, orderStatus: status,
+			})
+		}
 	}
-	for i, od := range ordersData {
+
+	// Also generate some orders for the first few voyages specifically
+	// to ensure the original demo data is there
+	fmt.Printf("Planning %d orders\n", len(orderList))
+
+	for _, od := range orderList {
 		depDate, _ := time.Parse("2006-01-02", od.depDate)
 		arrDate, _ := time.Parse("2006-01-02", od.arrDate)
-		// Link order to a voyage cargo note at the same departure port,
-		// so shipping companies can see it through load_note_id → voyage_cargo_note → shipping_line
+
+		// Find a voyage_cargo_note to link this order to
 		var loadNote model.VoyageCargoNote
 		loadNoteID := (*int64)(nil)
 		portID := ports[od.depP].PortID
@@ -415,39 +498,34 @@ func seed(db *gorm.DB) {
 			Limit(1).Scan(&loadNote).Error; err == nil && loadNote.NoteID > 0 {
 			loadNoteID = &loadNote.NoteID
 		}
+
+		subtotal := od.qty * od.unitPrice
+		cost := od.weight * od.unitPrice
 		order := model.ShippingOrder{
-			OrderNo: od.no, ShipperCompanyID: &shipperList(db, od.sidx).CompanyID, CityID: &cities[od.cidx].CityID,
+			OrderNo: od.no, ShipperCompanyID: &shippers[od.shipperIdx].CompanyID,
+			CityID: &cities[od.cityIdx].CityID,
 			DeparturePortID: &ports[od.depP].PortID, DestinationPortID: &ports[od.destP].PortID,
 			LoadNoteID: loadNoteID,
 			ExpectedDepartureDate: &depDate, ExpectedArrivalDate: &arrDate,
-			TotalCost: &od.cost, ShipperContact: strPtr(od.contact), ConsigneeContact: strPtr(od.consignee),
+			TotalCost: &cost, ShipperContact: strPtr(fmt.Sprintf("联系人-%s", shippers[od.shipperIdx].CompanyName)),
+			ConsigneeContact: strPtr(fmt.Sprintf("收货方-%d", rng.Intn(1000))),
 			PaymentStatus: &od.payStatus, OrderStatus: &od.orderStatus,
-			TotalWeightTon: &od.tw, TotalVolumeCubicMeter: &od.tv,
+			TotalWeightTon: &od.weight, TotalVolumeCubicMeter: &od.volume,
 			CreateTime: now, UpdateTime: now,
 		}
 		mustCreate(db, &order)
+
 		mustCreate(db, &model.OrderCargo{
 			OrderID: &order.OrderID, CargoName: strPtr(od.cargoName), CargoType: strPtr(od.cargoType),
-			Quantity: &od.cq, WeightTon: &od.cw, VolumeCubicMeter: &od.cv, UnitPrice: &od.cup, Subtotal: &od.csub,
+			Quantity: &od.qty, WeightTon: &od.weight, VolumeCubicMeter: &od.volume,
+			UnitPrice: &od.unitPrice, Subtotal: &subtotal,
 			CreateTime: now, UpdateTime: now,
 		})
-		if i == 2 {
-			mustCreate(db, &model.OrderCargo{
-				OrderID: &order.OrderID, CargoName: strPtr("笔记本电脑 (Laptops)"), CargoType: strPtr("container"),
-				Quantity: f64Ptr(300), WeightTon: f64Ptr(150), VolumeCubicMeter: f64Ptr(600), UnitPrice: f64Ptr(120), Subtotal: f64Ptr(36000),
-				CreateTime: now, UpdateTime: now,
-			})
-		}
 	}
-	fmt.Println("Created 10 sample orders with cargo items")
+	fmt.Printf("Created %d sample orders with cargo items\n", len(orderList))
 }
 
-func shipperList(db *gorm.DB, idx int) *model.ShipperCompany {
-	var companies []model.ShipperCompany
-	db.Where("delete_time IS NULL").Order("company_id ASC").Find(&companies)
-	if idx < len(companies) { return &companies[idx] }
-	return &companies[0]
-}
+var cargonames = []string{"铁矿石", "煤炭", "小麦", "钢材", "机械设备", "电子产品", "纺织品", "化工原料", "家具", "汽车零部件", "化肥", "塑料颗粒", "纸浆", "橡胶", "水泥"}
 
 func mustCreate(db *gorm.DB, value interface{}) {
 	if err := db.Create(value).Error; err != nil {
@@ -456,6 +534,11 @@ func mustCreate(db *gorm.DB, value interface{}) {
 }
 
 func strPtr(s string) *string { return &s }
+func strPtrOrNil(s string) *string { if s == "" { return nil }; return &s }
 func f64Ptr(f float64) *float64 { return &f }
 func timePtr(t time.Time) *time.Time { return &t }
 func ptrInt8(v int8) *int8 { return &v }
+
+func parseJSON(s string, v interface{}) error {
+	return json.Unmarshal([]byte(s), v)
+}

@@ -89,6 +89,8 @@ func main() {
 			&model.ShippingOrder{},
 			&model.OrderCargo{},
 			&model.SegmentCapacityUsage{},
+			&model.CargoType{},
+			&model.LineVessel{},
 		); err != nil {
 			slog.Error("auto migration failed", "error", err)
 		} else {
@@ -96,15 +98,23 @@ func main() {
 		}
 	}
 
-	// 新表（cargo_type, line_vessel）无条件自动创建，不依赖 AUTO_MIGRATE
-	if err := db.AutoMigrate(
-		&model.CargoType{},
-		&model.LineVessel{},
-	); err != nil {
-		slog.Error("auto migrate new tables failed", "error", err)
-	} else {
-		slog.Info("new tables auto migration completed")
-	}
+	// 新表无条件创建兜底（原生 SQL，不依赖 AUTO_MIGRATE）
+	db.Exec(`CREATE TABLE IF NOT EXISTS cargo_type (
+		type_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		type_name VARCHAR(100) NOT NULL,
+		type_code VARCHAR(50) NOT NULL UNIQUE,
+		description VARCHAR(500),
+		create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		delete_time DATETIME
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS line_vessel (
+		line_id BIGINT NOT NULL,
+		vessel_id BIGINT NOT NULL,
+		create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (line_id, vessel_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	slog.Info("new tables ensured (cargo_type, line_vessel)")
 
 	// ═══════════════════════════════════════════════════════════════
 	// 第 5 步：初始化 JWT 服务

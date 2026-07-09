@@ -1,6 +1,8 @@
 ﻿package handler
 
 import (
+	"encoding/json"
+	"io"
 	"strconv"
 
 	"backend/internal/model"
@@ -44,8 +46,9 @@ func (h *ShippingLineHandler) ListLines(c *gin.Context) {
 	role, _ := c.Get("role")
 	keyword := c.Query("keyword")
 
-	// shipping 角色：看自己所有状态的航线
-	if role == "shipping" {
+	switch role {
+	case "shipping":
+		// 海运公司：查看自己所有状态的航线
 		if uid, ok := c.Get("user_id"); ok {
 			if companyID, ok2 := uid.(int64); ok2 {
 				lines, total, err := h.svc.ListLinesByCompany(c.Request.Context(), companyID, page, pageSize, nil)
@@ -57,11 +60,20 @@ func (h *ShippingLineHandler) ListLines(c *gin.Context) {
 				return
 			}
 		}
+	case "shipper":
+		// 货主：只看已启用的航线
+		active := int8(model.LineStatusActive)
+		lines, total, err := h.svc.ListLines(c.Request.Context(), page, pageSize, keyword, &active)
+		if err != nil {
+			response.InternalServerError(c.Writer, "failed to list lines")
+			return
+		}
+		response.SuccessPage(c.Writer, lines, page, pageSize, total)
+		return
 	}
 
-	// 货主/shipper角色：只看已启用的航线
-	active := int8(model.LineStatusActive)
-	lines, total, err := h.svc.ListLines(c.Request.Context(), page, pageSize, keyword, &active)
+	// admin：查看所有航线
+	lines, total, err := h.svc.ListLines(c.Request.Context(), page, pageSize, keyword, nil)
 	if err != nil {
 		response.InternalServerError(c.Writer, "failed to list lines")
 		return
@@ -85,11 +97,43 @@ func (h *ShippingLineHandler) GetPortSequence(c *gin.Context) {
 }
 
 func (h *ShippingLineHandler) CreateLine(c *gin.Context) {
-	var line model.ShippingLine
-	if err := c.ShouldBindJSON(&line); err != nil {
-		response.BadRequest(c.Writer, "invalid request body")
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		response.BadRequest(c.Writer, "cannot read request body")
 		return
 	}
+
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &rawMap); err != nil {
+		response.BadRequest(c.Writer, "invalid JSON")
+		return
+	}
+
+	var line model.ShippingLine
+	if v, ok := rawMap["line_name"]; ok && v != nil { line.LineName = v.(string) }
+	if v, ok := rawMap["port_sequence"]; ok && v != nil { s := v.(string); line.PortSequence = &s }
+	if v, ok := rawMap["total_distance_nm"]; ok && v != nil { f := v.(float64); line.TotalDistanceNm = &f }
+	if v, ok := rawMap["departure_port_name"]; ok && v != nil { s := v.(string); line.DeparturePortName = &s }
+	if v, ok := rawMap["destination_port_name"]; ok && v != nil { s := v.(string); line.DestinationPortName = &s }
+	if v, ok := rawMap["description"]; ok && v != nil { s := v.(string); line.Description = &s }
+	if v, ok := rawMap["shipping_company_id"]; ok && v != nil {
+		if f, ok2 := v.(float64); ok2 { id := int64(f); line.ShippingCompanyID = &id }
+	}
+
+	var vesselIDs []int64
+	if v, ok := rawMap["vessel_ids"]; ok && v != nil {
+		switch arr := v.(type) {
+		case []interface{}:
+			for _, item := range arr {
+				if f, ok2 := item.(float64); ok2 {
+					vesselIDs = append(vesselIDs, int64(f))
+				}
+			}
+		case []int64:
+			vesselIDs = arr
+		}
+	}
+
 	role, _ := c.Get("role")
 	if role == "shipping" {
 		v := int8(model.LineStatusPending)
@@ -100,10 +144,24 @@ func (h *ShippingLineHandler) CreateLine(c *gin.Context) {
 			}
 		}
 	}
-	if err := h.svc.CreateLine(c.Request.Context(), &line); err != nil {
-		response.InternalServerError(c.Writer, "failed to create line")
+
+	// 事务内创建航线 + 分配船只
+	err = h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&line).Error; err != nil {
+			return err
+		}
+		for _, vid := range vesselIDs {
+			if err := tx.Create(&model.LineVessel{LineID: line.LineID, VesselID: vid}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		response.InternalServerError(c.Writer, "failed to create line: "+err.Error())
 		return
 	}
+
 	response.Success(c.Writer, line)
 }
 
